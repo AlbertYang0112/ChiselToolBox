@@ -3,3 +3,4 @@ project/target
 *.swp
 *~
 target/
+test_run_dir/
