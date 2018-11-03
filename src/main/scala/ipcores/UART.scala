@@ -1,11 +1,10 @@
 package ipcores
 
-import AXI4.{AXI4Bundle, AXI4Parameter}
 import chisel3._
-import chisel3.core.{withClock, withClockAndReset}
+import chisel3.core.withClock
 import chisel3.util.Cat
-import chisel3.util.{BitPat, Irrevocable, ListLookup, Lookup}
-import scala.math
+import ipcores.ParityBit.ParityBit
+
 
 /*
 class UART(axiParam: AXI4Parameter,
@@ -20,6 +19,11 @@ class UART(axiParam: AXI4Parameter,
 
 }
 */
+object ParityBit extends Enumeration {
+  type ParityBit = Value
+  val NoParityCheck, EvenParityCheck, OddParityCheck = Value
+}
+
 trait UARTReceiverStates {
   val stateWidth = 4
   val Idle = 0.U(stateWidth.W)
@@ -30,8 +34,7 @@ trait UARTReceiverStates {
   val FormatError = 5.U(stateWidth.W)
 }
 
-class UARTReceiver(byteLength: Int) extends Module with UARTReceiverStates {
-  // Todo: Add the odd/even parity check
+class UARTReceiver(byteLength: Int, parityCheck: ParityBit) extends Module with UARTReceiverStates {
   val io = IO(new Bundle{
     val scanClock = Input(Bool())
     val rx = Input(Bool())
@@ -40,16 +43,16 @@ class UARTReceiver(byteLength: Int) extends Module with UARTReceiverStates {
     val recvData = Output(UInt(byteLength.W))
   })
   require(byteLength >= 5 && byteLength <= 9, "UART can only deal with byte length within 6~9")
+  val receivingBits = byteLength + 1 + (if(parityCheck != ParityBit.NoParityCheck) 1 else 0)
+  val withParity = parityCheck != ParityBit.NoParityCheck
   val bitClock = Wire(Bool())
   val receiverClock = Wire(Bool())
   val bitCountFull = Wire(Bool())
   val bitCountEmpty = Wire(Bool())
   def writeOneBitToBuffer(buffer:UInt, bit:Bool):UInt = Cat(buffer, bit)
   val stopBit = Wire(Bool())
-  // Wires for debug
-  val testPulseCounter = Wire(UInt(4.W))
-  val testState = Wire(UInt(stateWidth.W))
-  val testBitCount = Wire(UInt(4.W))
+  val parityExpected = Wire(Bool())
+  val parityReceived = Wire(Bool())
 
   withClock(io.scanClock.asClock()) {
     val receiverState = RegInit(Idle)
@@ -57,8 +60,6 @@ class UARTReceiver(byteLength: Int) extends Module with UARTReceiverStates {
     val activeByteReceive = receiverState === Receiving || receiverState === ReceivingStopBit
     receiverClock := Mux(activeByteReceive, bitClock, true.B)
     bitClock := pulseCounter(3)
-    testPulseCounter := pulseCounter
-    testState := receiverState
     io.recvDone := receiverState === ReceiveDone
     when(receiverState === Idle) {
       when(!io.rx) {
@@ -81,7 +82,7 @@ class UARTReceiver(byteLength: Int) extends Module with UARTReceiverStates {
       }
     } .elsewhen(receiverState === ReceivingStopBit) {
       when(bitCountEmpty) {
-        receiverState := Mux(stopBit, FormatError, ReceiveDone)
+        receiverState := Mux(stopBit || parityExpected =/= parityReceived, FormatError, ReceiveDone)
       } .otherwise {
         pulseCounter := pulseCounter + 1.U
       }
@@ -93,13 +94,16 @@ class UARTReceiver(byteLength: Int) extends Module with UARTReceiverStates {
   }
   withClock(receiverClock.asClock()) {
     val bitCount = RegInit(0.U(4.W))
-    val recvBuffer = RegInit(0.U((byteLength + 1).W))
+    val recvBuffer = RegInit(0.U(receivingBits.W))
+    val parityExpectedReg = RegInit(0.U(1.W))
     recvBuffer := writeOneBitToBuffer(recvBuffer, io.rx)
-    bitCount := Mux(bitCount =/= byteLength.U, bitCount + 1.U, 0.U)
-    io.recvData := recvBuffer(byteLength,1)
+    parityExpectedReg := Mux(bitCount =/= (receivingBits - 1).U, parityExpectedReg ^ io.rx, 0.U)
+    bitCount := Mux(bitCount =/= (receivingBits - 1).U, bitCount + 1.U, 0.U)
+    parityExpected := Mux((parityCheck == ParityBit.EvenParityCheck).B, ~parityExpectedReg, parityExpectedReg)
+    parityReceived := Mux(withParity.B, recvBuffer(0), parityExpected)
+    io.recvData := recvBuffer(receivingBits - 1, if(withParity) 2 else 1)
     stopBit := recvBuffer(0)
-    bitCountFull := bitCount === byteLength.U
+    bitCountFull := bitCount === (receivingBits - 1).U
     bitCountEmpty := bitCount === 0.U
-    testBitCount := bitCount
   }
 }

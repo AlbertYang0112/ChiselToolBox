@@ -16,7 +16,7 @@ object Launcher {
       }
     },
     "UARTReceiver" -> { manager: TesterOptionsManager =>
-      Driver.execute(() => new UARTReceiver(9), manager) {
+      Driver.execute(() => new UARTReceiver(8, ParityBit.OddParityCheck), manager) {
         c => new UARTReceiverTests(c)
       }
   }
