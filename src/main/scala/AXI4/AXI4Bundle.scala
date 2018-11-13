@@ -1,40 +1,62 @@
 package AXI4
 import Chisel._
 import chisel3.util.Irrevocable
-/*
 
-case class AXI4BundleParameters(
-                                 addrBits: Int,
-                                 dataBits: Int,
-                                 idBits: Int,
-                                 userBits: Int,
-                                 wcorrupt: Boolean=false
-                               )
-{
-  require (dataBits >= 8, s"AXI4 data bits must be >= 8 (got $dataBits)")
-  require (addrBits >= 1, s"AXI4 addr bits must be >= 1 (got $addrBits)")
-  require (idBits >= 1, s"AXI4 id bits must be >= 1 (got $idBits)")
-  require (isPow2(dataBits), s"AXI4 data bits must be pow2 (got $dataBits)")
-
-  // Bring the globals into scope
-  val lenBits   = AXI4Parameters.lenBits
-  val sizeBits  = AXI4Parameters.sizeBits
-  val burstBits = AXI4Parameters.burstBits
-  val lockBits  = AXI4Parameters.lockBits
-  val cacheBits = AXI4Parameters.cacheBits
-  val protBits  = AXI4Parameters.protBits
-  val qosBits   = AXI4Parameters.qosBits
-  val respBits  = AXI4Parameters.respBits
-
-  def union(x: AXI4BundleParameters) =
-    AXI4BundleParameters(
-      max(addrBits, x.addrBits),
-      max(dataBits, x.dataBits),
-      max(idBits,   x.idBits),
-      max(userBits, x.userBits),
-      wcorrupt || x.wcorrupt)
+trait AXI4RespCode {
+  val _axiRespWidth = 2
+  val OKAY: UInt = 0.U(_axiRespWidth.W)
+  val EXOKAY: UInt = 1.U(_axiRespWidth.W)
+  val SLVERR: UInt = 2.U(_axiRespWidth.W)
+  val DECERR: UInt = 3.U(_axiRespWidth.W)
 }
-*/
+
+trait AXI4ARCacheCode {
+  val _axiCacheWidth = 4
+  val DEV_NONBUFFERABLE                 = 0x0.U(_axiCacheWidth.W)
+  val DEV_BUFFERABLE                    = 0x1.U(_axiCacheWidth.W)
+  val NORMAL_NONCACHEABLE_NONBUFFERABLE = 0x2.U(_axiCacheWidth.W)
+  val NORMAL_NONCACHEABLE_BUFFERABLE    = 0x3.U(_axiCacheWidth.W)
+  val WRITE_THROUGH_NO_ALLOCATE         = 0xA.U(_axiCacheWidth.W)
+  val WRITE_THROUGH_READ_ALLOCATE       = 0xE.U(_axiCacheWidth.W)
+  val WRITE_THROUGH_WRITE_ALLOCATE      = 0xA.U(_axiCacheWidth.W)
+  val WRITE_THROUGH_READ_WRITE_ALLOCATE = 0xE.U(_axiCacheWidth.W)
+  val WRITE_BACK_NO_ALLOCATE            = 0xB.U(_axiCacheWidth.W)
+  val WRITE_BACK_READ_ALLOCATE          = 0xF.U(_axiCacheWidth.W)
+  val WRITE_BACK_WRITE_ALLOCATE         = 0xB.U(_axiCacheWidth.W)
+  val WRITE_BACK_READ_WRITE_ALLOCATE    = 0xF.U(_axiCacheWidth.W)
+}
+
+trait AXI4AWCacheCode {
+  val _axiCacheWidth = 4
+  val DEV_NONBUFFERABLE                 = 0x0.U(_axiCacheWidth.W)
+  val DEV_BUFFERABLE                    = 0x1.U(_axiCacheWidth.W)
+  val NORMAL_NONCACHEABLE_NONBUFFERABLE = 0x2.U(_axiCacheWidth.W)
+  val NORMAL_NONCACHEABLE_BUFFERABLE    = 0x3.U(_axiCacheWidth.W)
+  val WRITE_THROUGH_NO_ALLOCATE         = 0x6.U(_axiCacheWidth.W)
+  val WRITE_THROUGH_READ_ALLOCATE       = 0x6.U(_axiCacheWidth.W)
+  val WRITE_THROUGH_WRITE_ALLOCATE      = 0xE.U(_axiCacheWidth.W)
+  val WRITE_THROUGH_READ_WRITE_ALLOCATE = 0xE.U(_axiCacheWidth.W)
+  val WRITE_BACK_NO_ALLOCATE            = 0x7.U(_axiCacheWidth.W)
+  val WRITE_BACK_READ_ALLOCATE          = 0x7.U(_axiCacheWidth.W)
+  val WRITE_BACK_WRITE_ALLOCATE         = 0xF.U(_axiCacheWidth.W)
+  val WRITE_BACK_READ_WRITE_ALLOCATE    = 0xF.U(_axiCacheWidth.W)
+}
+
+trait AXI4LockCode {
+  val _axiLockWidth = 1
+  val NORMAL_ACCESS = 0.U(_axiLockWidth.W)
+  val EXCLUSIVE_ACCESS = 1.U(_axiLockWidth.W)
+}
+
+trait AXI4ProtectCode {
+  val _axiProtWidth = 1
+  val UNPRIVILEGED_ACCESS = 0.U(_axiProtWidth.W)
+  val PRIVILEGED_ACCESS = 1.U(_axiProtWidth.W)
+  val SECURE_ACCESS = 0.U(_axiProtWidth.W)
+  val NONSECURE_ACCESS = 1.U(_axiProtWidth.W)
+  val DATA_ACCESS = 0.U(_axiProtWidth.W)
+  val INST_ACCESS = 1.U(_axiProtWidth.W)
+}
 
 abstract class AXI4BaseBundle(val param: AXI4Parameter) extends Bundle
 {
@@ -73,10 +95,20 @@ class AXI4BundleAddr(param: AXI4Parameter) extends AXI4BaseBundle(param) {
 
 }
 
-class AXI4BundleData(param: AXI4Parameter) extends AXI4BaseBundle(param){
+class AXI4BundleDataWrite(param: AXI4Parameter) extends AXI4BaseBundle(param){
   val id        = UInt(width = param.idBits)
   val data      = UInt(width = param.dataBits)
   val strobe    = UInt(width = param.dataBits / 8)
+  val last      = Bool()
+  val user      = if(param.userBits > 0) Some(UInt(width = param.userBits)) else None
+  //val valid     = Bool()
+  //val ready     = Bool()
+}
+
+class AXI4BundleDataRead(param: AXI4Parameter) extends AXI4BaseBundle(param){
+  val id        = UInt(width = param.idBits)
+  val data      = UInt(width = param.dataBits)
+  val resp    = UInt(width = param.dataBits / 8)
   val last      = Bool()
   val user      = if(param.userBits > 0) Some(UInt(width = param.userBits)) else None
   //val valid     = Bool()
@@ -92,11 +124,11 @@ class AXI4BundleResponse(param: AXI4Parameter) extends AXI4BaseBundle(param){
 }
 
 class AXI4Bundle(param: AXI4Parameter) extends AXI4BaseBundle(param){
-  val aw = Irrevocable(new AXI4BundleAddr(param))
-  val ar = Irrevocable(new AXI4BundleAddr(param))
-  val w  = Irrevocable(new AXI4BundleData(param))
-  val r  = Irrevocable(new AXI4BundleData(param))
-  val b  = Irrevocable(new AXI4BundleResponse(param))
+  val aw = DecoupledIO(new AXI4BundleAddr(param))
+  val ar = DecoupledIO(new AXI4BundleAddr(param))
+  val w  = DecoupledIO(new AXI4BundleDataWrite(param))
+  val r  = Flipped(DecoupledIO(new AXI4BundleDataRead(param)))
+  val b  = Flipped(DecoupledIO(new AXI4BundleResponse(param)))
 
   def tieoff() {
     ar.ready.dir match {

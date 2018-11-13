@@ -1,9 +1,139 @@
 package ipcores
 
+import AXI4.{AXI4Bundle, AXI4BundleAddr, AXI4Parameter, AXI4RespCode}
 import chisel3._
 import chisel3.core.withClock
 import chisel3.util.Cat
 import ipcores.ParityBit.ParityBit
+
+trait UARTAXI4Address {
+  val ReadBuffer = 0.U
+  val SendBuffer = 1.U
+  val StateBuffer = 2.U
+}
+
+class UARTAXI4(baud: Int,
+               clockFreq:Int,
+               axi4param : AXI4Parameter,
+               byteLength: Int
+              ) extends Module with UARTAXI4Address with AXI4RespCode {
+  val io = IO(new Bundle{
+    val axi4Lite = Flipped(new AXI4Bundle(axi4param))
+    val recvDone = Output(Bool())
+    val txDone = Output(Bool())
+    val tx = Output(Bool())
+    val rx = Input(Bool())
+  })
+  val baudClockSource = Module(new BaudClockGenerator(baud, clockFreq))
+  val receiver = Module(new UARTReceiver(byteLength = 8, parityCheck = ParityBit.NoParityCheck))
+  val transmitter = Module(new UARTTransmitter(byteLength = 8, parityCheck = ParityBit.NoParityCheck))
+  val arReady = RegInit(false.B)
+  val readState = RegInit(0.U(4.W))
+  val writeState = RegInit(0.U(4.W))
+  val txFIFO = RegInit(0.U(byteLength.W))
+  val rxFIFO = RegInit(0.U(byteLength.W))
+  val axiARReady = RegInit(true.B)
+  val axiAWReady = RegInit(true.B)
+  val axiRValid = RegInit(false.B)
+  val axiWReady = RegInit(false.B)
+  val axiBValid = RegInit(false.B)
+  val axiBResp = RegInit(OKAY)
+  val axiRResp = RegInit(OKAY)
+  val transmitterBufferUpdated = RegInit(false.B)
+  val axiRAddr = RegInit(0.U(2.W))
+
+  io.axi4Lite.aw.nodeq()
+  io.axi4Lite.ar.nodeq()
+  io.axi4Lite.w.nodeq()
+  io.axi4Lite.r.noenq()
+  io.axi4Lite.b.noenq()
+
+  io.axi4Lite.r.bits.id := 0.U
+  io.axi4Lite.r.bits.resp := axiRResp
+  io.axi4Lite.r.bits.last := false.B
+  io.axi4Lite.b.bits.id := 0.U
+  io.axi4Lite.r.bits.data := 0.U
+  io.axi4Lite.aw.ready := axiAWReady
+  io.axi4Lite.ar.ready := axiARReady
+  io.axi4Lite.r.valid := axiRValid
+  io.axi4Lite.w.ready := axiWReady
+  io.axi4Lite.b.valid := axiBValid
+  io.axi4Lite.b.bits.resp := axiBResp
+  def isValidLenAndSize(addrBundle: AXI4BundleAddr):Bool =
+    (addrBundle.len === 0.U) & (addrBundle.size === (if(byteLength == 9) 1.U else 0.U))
+
+  io.recvDone := receiver.io.recvDone
+  io.txDone := transmitter.io.ready
+
+  // Clock Interconnect
+  transmitter.io.byteClock := baudClockSource.io.baudClock
+  receiver.io.scanClock := baudClockSource.io.baudClock16x
+
+  // IO Connect
+  io.tx := transmitter.io.tx
+  receiver.io.rx := io.rx
+
+  transmitter.io.txData := txFIFO
+  transmitter.io.dataValid := transmitterBufferUpdated
+
+  // Update the RX FIFO
+  when(!(io.axi4Lite.r.fire() && readState =/= ReadBuffer) && receiver.io.recvDone) {
+    rxFIFO := receiver.io.recvData
+    receiver.io.readDone := true.B
+  } .otherwise {
+    receiver.io.readDone := false.B
+  }
+  when(io.axi4Lite.ar.fire()) {
+    when(io.axi4Lite.ar.bits.addr === ReadBuffer & isValidLenAndSize(io.axi4Lite.ar.bits)) {
+      axiRAddr := ReadBuffer
+      axiRValid := true.B
+      axiRResp := OKAY
+    } .elsewhen(io.axi4Lite.ar.bits.addr === SendBuffer & isValidLenAndSize(io.axi4Lite.ar.bits)) {
+      axiRAddr := SendBuffer
+      axiRValid := true.B
+      axiRResp := OKAY
+    } .otherwise {
+      axiRAddr := ReadBuffer
+      axiRResp := SLVERR
+      axiRValid := true.B
+    }
+    io.axi4Lite.r.bits.last := true.B
+  }
+  when(io.axi4Lite.r.fire()) {
+    axiRValid := false.B
+    io.axi4Lite.r.bits.last := false.B
+  }
+  when(axiRAddr === ReadBuffer) {
+    io.axi4Lite.r.bits.data := rxFIFO
+  } .elsewhen(axiRAddr === SendBuffer) {
+    io.axi4Lite.r.bits.data := txFIFO
+  } otherwise {
+    io.axi4Lite.r.bits.data := 0.U
+  }
+
+  when(io.axi4Lite.aw.fire()) {
+    axiWReady := true.B
+    when(io.axi4Lite.aw.bits.addr === SendBuffer & isValidLenAndSize(io.axi4Lite.aw.bits)) {
+      axiBResp := OKAY
+    } .otherwise {
+      axiBResp := SLVERR
+    }
+  }
+  when(io.axi4Lite.w.fire()){
+    axiWReady := false.B
+    axiBValid := true.B
+    when(io.axi4Lite.aw.bits.addr === SendBuffer & isValidLenAndSize(io.axi4Lite.aw.bits)) {
+      txFIFO := io.axi4Lite.w.bits.data
+      transmitterBufferUpdated := true.B
+    }
+  }
+  when(io.axi4Lite.b.fire()) {
+    axiBValid := false.B
+  }
+  when(!transmitter.io.ready) {
+    transmitterBufferUpdated := false.B
+  }
+}
 
 
 class UART(baud: Int, clockFreq: Int) extends Module {
@@ -17,21 +147,11 @@ class UART(baud: Int, clockFreq: Int) extends Module {
     val txReady = Output(Bool())
     val txDataValid = Input(Bool())
   })
-  val clockDiv = clockFreq / baud / 16
-  println("Actual Baud Clock: " + (clockFreq.toDouble / (clockDiv * 16).toDouble))
-  val receiverScanClock = RegInit(false.B)
   val receiver = Module(new UARTReceiver(byteLength = 8, parityCheck = ParityBit.NoParityCheck))
   val transmitter = Module(new UARTTransmitter(byteLength = 8, parityCheck = ParityBit.NoParityCheck))
-  val clockDivider = Module(new ClockDivider(clockDiv))
-  val baudClock = Wire(Bool())
-  clockDivider.io.clockIn := clock.asUInt()
-  withClock(clockDivider.io.clockOut.asClock()) {
-    val divider = RegInit(0.U(4.W))
-    divider := divider + 1.U
-    baudClock := divider(3)
-  }
-  transmitter.io.byteClock := baudClock
-  receiver.io.scanClock := clockDivider.io.clockOut
+  val baudClockSource = Module(new BaudClockGenerator(baud, clockFreq))
+  transmitter.io.byteClock := baudClockSource.io.baudClock
+  receiver.io.scanClock := baudClockSource.io.baudClock16x
   io.tx := transmitter.io.tx
   io.txReady := transmitter.io.ready
   transmitter.io.dataValid := io.txDataValid
@@ -59,16 +179,14 @@ class UARTTransmitter(byteLength: Int, parityCheck: ParityBit) extends Module wi
     val ready = Output(Bool())
     val dataValid = Input(Bool())
   })
-  val txBufferFast = RegInit(0.U(byteLength.W))
+  // val txBufferFast = RegInit(0.U(byteLength.W))
+  val txBufferFast = Wire(UInt(byteLength.W))
   val bufferValid = RegInit(false.B)
   val testState = Wire(UInt(stateWidth.W))
   val testBitCount = Wire(UInt(3.W))
   val testParity = Wire(Bool())
   val testBuffer = Wire(UInt(byteLength.W))
-  when(!bufferValid & io.dataValid) {
-    txBufferFast := io.txData
-    bufferValid := true.B
-  }
+  txBufferFast := io.txData
 
   withClock(io.byteClock.asClock()) {
     val txState = RegInit(Idle)
@@ -84,7 +202,7 @@ class UARTTransmitter(byteLength: Int, parityCheck: ParityBit) extends Module wi
     io.ready := txState === Idle
     when(txState === Idle) {
       tx := true.B
-      when(bufferValid) {
+      when(io.dataValid) {
         txState := TransmittingHead
         txBuffer := txBufferFast
         bitCount := 0.U
@@ -153,9 +271,9 @@ class UARTReceiver(byteLength: Int, parityCheck: ParityBit) extends Module with 
     val receiverState = RegInit(Idle)
     val pulseCounter = RegInit(0.U(4.W))
     val activeByteReceive = receiverState === Receiving || receiverState === ReceivingStopBit
+    io.recvDone := receiverState === ReceiveDone
     receiverClock := Mux(activeByteReceive, bitClock, true.B)
     bitClock := pulseCounter(3)
-    io.recvDone := receiverState === ReceiveDone
     when(receiverState === Idle) {
       when(!io.rx) {
         receiverState := IdentifyingHead
@@ -202,3 +320,21 @@ class UARTReceiver(byteLength: Int, parityCheck: ParityBit) extends Module with 
     bitCountEmpty := bitCount === 0.U
   }
 }
+
+class BaudClockGenerator(baud: Int, clockFreq: Int) extends Module {
+  val io = IO(new Bundle{
+    val baudClock = Output(Bool())
+    val baudClock16x = Output(Bool())
+  })
+  val clockDiv = clockFreq / baud / 16
+  println("Actual Baud Clock: " + (clockFreq.toDouble / (clockDiv * 16).toDouble))
+  val clockDivider = Module(new ClockDivider(clockDiv))
+  clockDivider.io.clockIn := clock.asUInt()
+  io.baudClock16x := clockDivider.io.clockOut
+  withClock(clockDivider.io.clockOut.asClock()) {
+    val divider = RegInit(0.U(4.W))
+    divider := divider + 1.U
+    io.baudClock := divider(3)
+  }
+}
+

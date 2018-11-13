@@ -1,5 +1,6 @@
 package ipcores
 
+import AXI4.AXI4Parameter
 import chisel3.iotesters.{Driver, TesterOptionsManager}
 import utils.CircuitRunner
 
@@ -38,6 +39,23 @@ object Launcher {
     "ClockDivider" -> { manager: TesterOptionsManager =>
       Driver.execute(() => new ClockDivider(7), manager) {
         c => new ClockDividerTests(c)
+      }
+    },
+    "UARTAXI4" -> { manager: TesterOptionsManager =>
+      Driver.execute(() => new UARTAXI4(
+        baud = 115200,
+        clockFreq = 10000000,
+        byteLength = 8,
+        axi4param = AXI4Parameter(
+          idBits = 1,
+          addrBits = 2,
+          dataBits = 8,
+          userBits = 0,
+          wcorrupt = false,
+          isLite = false,
+          isMaster = false
+        )), manager) {
+        c => new UARTAXI4Tests(c)
       }
     }
   )
