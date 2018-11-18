@@ -96,7 +96,7 @@ class AXI4BundleAddr(param: AXI4Parameter) extends AXI4BaseBundle(param) {
 }
 
 class AXI4BundleDataWrite(param: AXI4Parameter) extends AXI4BaseBundle(param){
-  val id        = UInt(width = param.idBits)
+  // val id        = UInt(width = param.idBits)
   val data      = UInt(width = param.dataBits)
   val strobe    = UInt(width = param.dataBits / 8)
   val last      = Bool()
@@ -108,7 +108,7 @@ class AXI4BundleDataWrite(param: AXI4Parameter) extends AXI4BaseBundle(param){
 class AXI4BundleDataRead(param: AXI4Parameter) extends AXI4BaseBundle(param){
   val id        = UInt(width = param.idBits)
   val data      = UInt(width = param.dataBits)
-  val resp    = UInt(width = param.dataBits / 8)
+  val resp      = UInt(width = param.respBits)
   val last      = Bool()
   val user      = if(param.userBits > 0) Some(UInt(width = param.userBits)) else None
   //val valid     = Bool()
