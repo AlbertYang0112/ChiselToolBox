@@ -41,6 +41,8 @@ class UARTAXI4(baud: Int,
   val axiRResp = RegInit(OKAY)
   val transmitterBufferUpdated = RegInit(false.B)
   val axiRAddr = RegInit(0.U(2.W))
+  val axiRID = RegInit(0.U(axi4param.idBits.W))
+  val axiWID = RegInit(0.U(axi4param.idBits.W))
 
   io.axi4Lite.aw.nodeq()
   io.axi4Lite.ar.nodeq()
@@ -48,10 +50,10 @@ class UARTAXI4(baud: Int,
   io.axi4Lite.r.noenq()
   io.axi4Lite.b.noenq()
 
-  io.axi4Lite.r.bits.id := 0.U
+  io.axi4Lite.r.bits.id := axiRID
   io.axi4Lite.r.bits.resp := axiRResp
   io.axi4Lite.r.bits.last := false.B
-  io.axi4Lite.b.bits.id := 0.U
+  io.axi4Lite.b.bits.id := axiWID
   io.axi4Lite.r.bits.data := 0.U
   io.axi4Lite.aw.ready := axiAWReady
   io.axi4Lite.ar.ready := axiARReady
@@ -97,6 +99,7 @@ class UARTAXI4(baud: Int,
       axiRResp := SLVERR
       axiRValid := true.B
     }
+    axiRID := io.axi4Lite.ar.bits.id
     io.axi4Lite.r.bits.last := true.B
   }
   when(io.axi4Lite.r.fire()) {
@@ -118,6 +121,7 @@ class UARTAXI4(baud: Int,
     } .otherwise {
       axiBResp := SLVERR
     }
+    axiWID := io.axi4Lite.aw.bits.id
   }
   when(io.axi4Lite.w.fire()){
     axiWReady := false.B

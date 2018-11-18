@@ -3,6 +3,7 @@ package ipcores
 import AXI4.AXI4Parameter
 import chisel3.iotesters.{Driver, TesterOptionsManager}
 import utils.CircuitRunner
+import chisel3.util.Queue
 
 object Launcher {
   val circuits = Map(
@@ -47,7 +48,7 @@ object Launcher {
         clockFreq = 10000000,
         byteLength = 8,
         axi4param = AXI4Parameter(
-          idBits = 1,
+          idBits = 2,
           addrBits = 2,
           dataBits = 8,
           userBits = 0,
