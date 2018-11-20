@@ -3,15 +3,16 @@ package SystolicArray
 import chisel3._
 import chisel3.util.{DeqIO, EnqIO, Queue}
 
-class PEBundle(dataBits: Int) extends Bundle {
-  val dataIn      = DeqIO(UInt(dataBits.W))
-  val dataOut     = EnqIO(UInt(dataBits.W))
-  val weightIn    = DeqIO(UInt(dataBits.W))
-  val weightOut   = EnqIO(UInt(dataBits.W))
-  val resultIn    = DeqIO(UInt(dataBits.W))
-  val resultOut   = EnqIO(UInt(dataBits.W))
-  val controlIn   = DeqIO(Bool())
-  val controlOut  = EnqIO(Bool())
+class PEBundleOutput(val dataBits: Int) extends Bundle {
+  val data     = EnqIO(UInt(dataBits.W))
+  val weight   = EnqIO(UInt(dataBits.W))
+  val result   = EnqIO(UInt(dataBits.W))
+  val control  = EnqIO(Bool())
+}
+
+class PEBundle(val dataBits: Int) extends Bundle {
+  val in = Flipped(new PEBundleOutput(dataBits))
+  val out = new PEBundleOutput(dataBits)
 }
 
 trait PEMode {
@@ -24,35 +25,36 @@ class ProcessingElement(
                          resultBufferDepth: Int
                        ) extends Module {
   val io = IO(new PEBundle(dataBits))
-  val dataBuffer = RegNext(io.dataIn.bits)
-  val weightBuffer = RegNext(io.weightIn.bits)
+  val dataBuffer = RegNext(io.in.data.bits)
+  val weightBuffer = RegNext(io.in.weight.bits)
   val resultBuffer = RegInit(0.U(dataBits.W))
-  val controlBuffer = RegNext(io.controlIn.bits)
+  val controlBuffer = RegNext(io.in.control.bits)
   val queueIn = Wire(EnqIO(UInt(dataBits.W)))
   val queueOut = Wire(DeqIO(UInt(dataBits.W)))
-  val dataValid = RegNext(io.dataIn.valid)
-  val weightValid = RegNext(io.weightIn.valid)
+  val dataValid = RegNext(io.in.data.valid)
+  val weightValid = RegNext(io.in.weight.valid)
   val resultValid = RegInit(false.B)
-  val controlValid = RegNext(io.controlIn.valid)
-  val select = RegNext(io.controlIn.bits)
+  val controlValid = RegNext(io.in.control.valid)
+  val select = RegNext(io.in.control.bits)
   val PERunning = RegInit(false.B)
   val queueRun = Wire(Bool())
-  queueRun := weightValid & dataValid | select
+  queueRun := io.in.weight.valid & io.in.data.valid
   queueOut <> Queue(queueIn, resultBufferDepth)
   queueOut.ready := queueRun
   queueIn.valid := queueRun
-  io.weightOut.bits := weightBuffer
-  io.dataOut.bits := dataBuffer
-  io.resultOut.bits := Mux(select, io.resultIn.bits, queueOut.bits)
-  io.controlOut.bits := controlBuffer
-  io.dataOut.valid := dataValid
-  io.weightOut.valid := weightValid
-  io.resultOut.valid := resultValid
-  io.controlOut.valid := controlValid
-  io.weightIn.ready := true.B
-  io.dataIn.ready := true.B
-  io.resultIn.ready := true.B
-  io.controlIn.ready := true.B
-  resultValid := Mux(select, io.resultIn.valid, queueOut.valid)
-  queueIn.bits := io.dataIn.bits * io.weightIn.bits + queueOut.bits
+  io.out.weight.bits := weightBuffer
+  io.out.data.bits := dataBuffer
+  io.out.result.bits := Mux(select, io.in.result.bits, queueOut.bits)
+  io.out.control.bits := controlBuffer
+  io.out.data.valid := dataValid
+  io.out.weight.valid := weightValid
+  io.out.result.valid := Mux(select, io.in.result.valid, queueOut.valid)
+  // io.resultOut.valid := resultValid
+  io.out.control.valid := controlValid
+  io.in.weight.ready := true.B
+  io.in.data.ready := true.B
+  io.in.result.ready := true.B
+  io.in.control.ready := true.B
+  // resultValid := Mux(select, io.resultIn.valid, queueOut.valid)
+  queueIn.bits := io.in.data.bits * io.in.weight.bits + queueOut.bits
 }
