@@ -10,6 +10,11 @@ object Launcher {
       Driver.execute(() => new ProcessingElement(8,5), manager) {
         c => new ProcessingElementTests(c)
       }
+    },
+    "MatMul" -> { manager: TesterOptionsManager =>
+      Driver.execute(() => new MatMul(8, 3), manager) {
+        c => new MatMulTests(c)
+      }
     }
   )
   def main(args: Array[String]): Unit = {
