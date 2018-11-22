@@ -1,6 +1,7 @@
 package SystolicArray
 
 import chisel3.iotesters.{AdvTester, ChiselFlatSpec, Driver}
+import scala.collection.mutable.ListBuffer
 
 class MatMulTests(c: MatMul) extends AdvTester(c) {
   val dataIn = c.io.ioArray.map{peBundle => DecoupledSource(peBundle.in.data)}
@@ -12,8 +13,16 @@ class MatMulTests(c: MatMul) extends AdvTester(c) {
   val resultOut = c.io.ioArray.map{peBundle => IrrevocableSink(peBundle.out.result)}
   val controlOut = c.io.ioArray.map{peBundle => IrrevocableSink(peBundle.out.control)}
 
-  val inputArray = List.fill(dataIn.size)(List.range(1, 2*(dataIn.size), 2))
-  val weightArray = List.fill(dataIn.size)(List.range(1, dataIn.size + 1))
+  // var inputArray = ListBuffer.fill(dataIn.size, dataIn.size)(0)
+  // var weightArray = ListBuffer.fill(dataIn.size, dataIn.size)(0)
+  val inputArray = List.tabulate(dataIn.size, dataIn.size)((row, col) => (row + 1) * (col + 1))
+  val weightArray = List.tabulate(dataIn.size, dataIn.size)((row, col) => (row + 1) * (col + 1))
+  for(row <- 0 until dataIn.size) {
+    for(col <- 0 until dataIn.size) {
+      print(inputArray(row)(col))
+      step(1)
+    }
+  }
   val resultArray = List.fill(dataIn.size, dataIn.size)(0)
   val controlArray = List.fill(dataIn.size, dataIn.size)(1)
   for(chan <- dataIn.indices) {

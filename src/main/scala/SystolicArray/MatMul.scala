@@ -34,7 +34,8 @@ class inputController(channels: Int, dataBits: Int) extends Module {
     io.out(chan).data.valid := readyBuffer(chan) & io.in(chan).data.valid
     io.out(chan).weight.valid := readyBuffer(chan) & io.in(chan).weight.valid
     io.out(chan).control.valid := readyBuffer(chan) & io.in(chan).control.valid
-    io.out(chan).result.valid := readyBuffer(chan) & io.in(chan).result.valid
+    // io.out(chan).result.valid := readyBuffer(chan) & io.in(chan).result.valid
+    io.out(chan).result.valid := false.B
   }
   for(chan <- 0 until channels - 1) {
     // Construct the register chain.
@@ -51,7 +52,8 @@ class inputController(channels: Int, dataBits: Int) extends Module {
     io.out(chan).data.bits := io.in(chan).data.bits
     io.out(chan).weight.bits := io.in(chan).weight.bits
     io.out(chan).result.bits := io.in(chan).result.bits
-    io.out(chan).control.bits := io.in(chan).control.bits
+    // io.out(chan).control.bits := io.in(chan).control.bits
+    io.out(chan).control.bits := io.out(chan).data.valid
   }
 }
 
