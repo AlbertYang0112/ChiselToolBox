@@ -12,7 +12,7 @@ object Launcher {
       }
     },
     "MatMul" -> { manager: TesterOptionsManager =>
-      Driver.execute(() => new MatMul(8, 3), manager) {
+      Driver.execute(() => new MatMul(32, 3), manager) {
         c => new MatMulTests(c)
       }
     }

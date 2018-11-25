@@ -38,10 +38,12 @@ class ProcessingElement(
   val select = RegNext(io.in.control.bits)
   val PERunning = RegInit(false.B)
   val queueRun = Wire(Bool())
+  val partialSum = Wire(UInt(dataBits.W))
   queueRun := io.in.weight.valid & io.in.data.valid
   queueOut <> Queue(queueIn, resultBufferDepth)
-  queueOut.ready := queueRun
+  queueOut.ready := Mux(select, queueRun, io.out.result.ready)
   queueIn.valid := queueRun
+  partialSum := Mux(select, queueOut.bits, 0.U(dataBits.W))
   io.out.weight.bits := weightBuffer
   io.out.data.bits := dataBuffer
   io.out.result.bits := Mux(select, io.in.result.bits, queueOut.bits)
@@ -56,5 +58,5 @@ class ProcessingElement(
   io.in.result.ready := true.B
   io.in.control.ready := true.B
   // resultValid := Mux(select, io.resultIn.valid, queueOut.valid)
-  queueIn.bits := io.in.data.bits * io.in.weight.bits + queueOut.bits
+  queueIn.bits := io.in.data.bits * io.in.weight.bits + partialSum
 }

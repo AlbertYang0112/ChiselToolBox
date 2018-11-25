@@ -12,9 +12,9 @@ class inputController(channels: Int, dataBits: Int) extends Module {
     val run = Input(Bool())
   })
 
-  def bundleAllReady(bundle: PEBundleOutput) =
+  def bundleAllReady(bundle: PEBundleOutput): Bool =
     bundle.weight.ready & bundle.data.ready & bundle.result.ready & bundle.control.ready
-  def bundleAllValid(bundle: PEBundleOutput) =
+  def bundleAllValid(bundle: PEBundleOutput): Bool =
     bundle.weight.valid & bundle.data.valid & bundle.result.valid & bundle.control.valid
 
   val inReady = Wire(Bool())
