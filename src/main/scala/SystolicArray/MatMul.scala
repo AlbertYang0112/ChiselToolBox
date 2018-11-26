@@ -20,24 +20,27 @@ class inputController(channels: Int, dataBits: Int) extends Module {
   val inReady = Wire(Bool())
   val outReady = Wire(Bool())
   val allReady = Wire(Bool())
-  inReady := Cat(io.in.map(bundleAllValid(_)))
-  outReady := Cat(io.out.map(bundleAllReady(_)))
+  inReady := Cat(io.in.map(bundleAllValid(_))).andR()
+  outReady := Cat(io.out.map(bundleAllReady(_))).andR()
   allReady := inReady & outReady
 
-  val readyBuffer = List.fill(channels)(RegInit(false.B))
+  val readyBuffer = List.fill(channels + 1)(RegInit(false.B))
   for(chan <- 0 until channels) {
     // Link the ready buffer to the IO.
     io.in(chan).data.ready := readyBuffer(chan)
     io.in(chan).weight.ready := readyBuffer(chan)
     io.in(chan).control.ready := readyBuffer(chan)
     io.in(chan).result.ready := readyBuffer(chan)
-    io.out(chan).data.valid := readyBuffer(chan) & io.in(chan).data.valid
-    io.out(chan).weight.valid := readyBuffer(chan) & io.in(chan).weight.valid
-    io.out(chan).control.valid := readyBuffer(chan) & io.in(chan).control.valid
+    // io.out(chan).data.valid := readyBuffer(chan + 1) & io.in(chan).data.valid
+    // io.out(chan).weight.valid := readyBuffer(chan + 1) & io.in(chan).weight.valid
+    // io.out(chan).control.valid := readyBuffer(chan + 1) & io.in(chan).control.valid
+    io.out(chan).data.valid := readyBuffer(chan + 1) & readyBuffer(chan)
+    io.out(chan).weight.valid := readyBuffer(chan + 1) & readyBuffer(chan)
+    io.out(chan).control.valid := readyBuffer(chan + 1) & readyBuffer(chan)
     // io.out(chan).result.valid := readyBuffer(chan) & io.in(chan).result.valid
     io.out(chan).result.valid := false.B
   }
-  for(chan <- 0 until channels - 1) {
+  for(chan <- 0 until channels) {
     // Construct the register chain.
     readyBuffer(chan + 1) := readyBuffer(chan)
   }
