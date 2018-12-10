@@ -15,6 +15,11 @@ object Launcher {
       Driver.execute(() => new MatMul(32, 3), manager) {
         c => new MatMulTests(c)
       }
+    },
+    "PEArray" -> { manager: TesterOptionsManager =>
+      Driver.execute(() => new PEArray(3, 3, 8, 2), manager) {
+        c => new PEArrayTests(c)
+      }
     }
   )
   def main(args: Array[String]): Unit = {
