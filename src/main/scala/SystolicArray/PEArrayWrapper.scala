@@ -2,16 +2,6 @@ package SystolicArray
 import chisel3._
 import chisel3.util.{Cat, Queue}
 
-trait PEAControlBit {
-  val RESET = 0
-  val DATA_IN_FULL = 1
-  val DATA_IN_EMPTY = 2
-  val WEIGHT_IN_FULL = 3
-  val WEIGHT_IN_EMPTY = 4
-  val RESULT_FULL = 5
-  val RESULT_EMPTY = 6
-}
-
 class PEArrayWrapper(val rows: Int,
                      val cols: Int,
                      val dataBits: Int,
@@ -35,11 +25,21 @@ class PEArrayWrapper(val rows: Int,
   private val weightInQueue = List.tabulate(cols)(col => Queue(io.ioArray(col).in.weight, wrapFIFODepth))
   private val resultOutQueue = List.tabulate(rows)(row => Queue(PEA.io.ioArray(row).out.result, wrapFIFODepth))
 
-  val counter = RegInit(0.U(2.W))
+  val counter = RegInit(2.U(2.W))
+  val counterLast = RegNext(counter)
+
+  val fire = Cat(PEA.io.ioArray.map{peIO => peIO.in.data.valid & peIO.in.weight.valid & peIO.in.control.valid}).andR()
+  val refreshSpike = counter === 2.U && fire
+
+  val PEAValid = Wire(Bool())
+  PEAValid := Cat(PEA.io.ioArray.map{
+    peIO => peIO.out.data.valid &
+      peIO.out.weight.valid &
+      peIO.out.control.valid}).andR()
 
   when(io.fifoReset) {
     counter := 0.U
-  } .elsewhen(dataInQueue.head.valid & weightInQueue.head.valid) {
+  } .elsewhen(fire) {
     when(counter < 2.U) {
       counter := counter + 1.U
     } .otherwise {
@@ -49,13 +49,15 @@ class PEArrayWrapper(val rows: Int,
 
   for (row <- dataInQueue.indices) {
     PEA.io.ioArray(row).in.data <> dataInQueue(row)
-    PEA.io.ioArray(row).out.data.ready := true.B
+//    PEA.io.ioArray(row).out.data.ready := PEA.io.ioArray(row).in.data.valid &
+//      Cat(PEA.io.ioArray.map(_.in.weight.valid)).andR()
+    PEA.io.ioArray(row).out.data.ready := fire
     io.ioArray(row).out.data.bits := 0.U(dataBits.W)
     io.ioArray(row).out.data.valid := false.B
   }
   for (col <- weightInQueue.indices) {
     PEA.io.ioArray(col).in.weight <> weightInQueue(col)
-    PEA.io.ioArray(col).out.weight.ready := true.B
+    PEA.io.ioArray(col).out.weight.ready := fire
     io.ioArray(col).out.weight.bits := 0.U(dataBits.W)
     io.ioArray(col).out.weight.valid := false.B
   }
@@ -66,9 +68,9 @@ class PEArrayWrapper(val rows: Int,
     PEA.io.ioArray(row).in.result.bits := 0.U
   }
   for (col <- 0 until cols) {
-    PEA.io.ioArray(col).out.control.ready := true.B
+    PEA.io.ioArray(col).out.control.ready := PEAValid
     PEA.io.ioArray(col).in.control.valid := dataInQueue.head.valid & weightInQueue.head.valid
-    PEA.io.ioArray(col).in.control.bits := counter === 0.U
+    PEA.io.ioArray(col).in.control.bits := refreshSpike
     io.ioArray(col).out.control.bits := false.B
     io.ioArray(col).out.control.valid := true.B
     io.ioArray(col).in.control.ready := true.B
@@ -82,4 +84,5 @@ class PEArrayWrapper(val rows: Int,
 
   io.resultFull := Cat(PEA.io.ioArray.map(!_.out.result.ready).reverse)
   io.resultEmpty := Cat(resultOutQueue.map(!_.valid).reverse)
+
 }
