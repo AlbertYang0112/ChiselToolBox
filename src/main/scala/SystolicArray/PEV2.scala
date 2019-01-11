@@ -10,17 +10,17 @@ class PEV2(
   val io = IO(new PEBundle(dataBits))
 
   // Pipeline Buffers
-  val dataBuffer = RegNext(io.in.data.bits)
-  val weightBuffer = RegNext(io.in.weight.bits)
-  // val resultBuffer = RegNext(io.in.result.bits)
-  val controlBuffer = RegNext(io.in.control.bits)
+  val dataBuffer = RegInit(0.U(dataBits.W))
+  val weightBuffer = RegInit(0.U(dataBits.W))
+  //val resultBuffer = RegNext(0.U(dataBits.W))
+  val controlBuffer = RegInit(0.U(dataBits.W))
 
   val queueIn = Wire(EnqIO(UInt(dataBits.W)))
   val queueOut = Wire(DeqIO(UInt(dataBits.W)))
-  val dataValid = RegNext(io.in.data.valid)
-  val weightValid = RegNext(io.in.weight.valid)
-  val resultValid = RegNext(io.in.result.valid)
-  val controlValid = RegNext(io.in.control.valid)
+  val dataValid = RegInit(false.B)
+  val weightValid = RegInit(false.B)
+  val resultValid = RegInit(false.B)
+  val controlValid = RegInit(false.B)
 
   val partialSum = RegInit(0.U(dataBits.W))
   val mulAddResult = Wire(UInt(dataBits.W))
@@ -28,7 +28,8 @@ class PEV2(
   val inputValid = io.in.data.valid & io.in.weight.valid & io.in.control.valid
   val outputReady = io.out.data.ready & io.out.weight.ready & io.out.control.ready
   mulAddResult := io.in.data.bits * io.in.weight.bits + addRhs
-  partialSum := mulAddResult
+  partialSum := Mux(io.out.data.ready & io.out.weight.ready & io.in.control.valid,
+    mulAddResult, partialSum)
   queueIn.bits := partialSum
   queueIn.valid := io.in.control.bits & inputValid
 
@@ -40,15 +41,43 @@ class PEV2(
   io.out.result.bits := Mux(queueOut.valid, queueOut.bits, io.in.result.bits)
   io.out.control.bits := controlBuffer
 
-  io.out.data.valid := inputValid
-  io.out.weight.valid := inputValid
-  io.out.control.valid := inputValid
-  io.out.result.valid := queueOut.valid | resultValid
+  io.out.data.valid := dataValid
+  io.out.weight.valid := weightValid
+  io.out.control.valid := controlValid
+  io.out.result.valid := queueOut.valid | io.in.result.valid
 
-  io.in.weight.ready := outputReady
-  io.in.data.ready := outputReady
+  io.in.weight.ready := io.out.weight.fire() | !weightValid
+  io.in.data.ready := io.out.data.fire() | !dataValid
   io.in.result.ready := !queueOut.valid
-  io.in.control.ready := outputReady
+  io.in.control.ready := io.out.control.fire() | !controlValid
+
+  when(io.in.data.fire()) {
+    dataValid := true.B
+    dataBuffer := io.in.data.bits
+  } .elsewhen(io.out.data.fire()) {
+    dataValid := false.B
+    dataBuffer := 0.U(dataBits.W)
+  }
+  when(io.in.weight.fire()) {
+    weightValid := true.B
+    weightBuffer := io.in.weight.bits
+  } .elsewhen(io.out.weight.fire()) {
+    weightValid := false.B
+    weightBuffer := 0.U(dataBits.W)
+  }
+  when(io.in.control.fire()) {
+    controlValid := true.B
+    controlBuffer := io.in.control.bits
+  } .elsewhen(io.out.control.fire()) {
+    controlValid := false.B
+    controlBuffer := 0.U(dataBits.W)
+  }
+
+  when(queueOut.valid | io.in.result.valid) {
+    resultValid := true.B
+  } .elsewhen(io.out.result.fire()) {
+    resultValid := false.B
+  }
 
 }
 
