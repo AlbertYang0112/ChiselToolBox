@@ -8,38 +8,32 @@ class PEArrayTests(c: PEArray) extends AdvTester(c){
   val weightIn = c.io.ioArray.map{peBundle => DecoupledSource(peBundle.in.weight)}
   val resultIn = c.io.ioArray.map{peBundle => DecoupledSource(peBundle.in.result)}
   val controlIn = c.io.ioArray.map{peBundle => DecoupledSource(peBundle.in.control)}
-  val dataOut = c.io.ioArray.map{peBundle => IrrevocableSink(peBundle.out.data)}
-  val weightOut = c.io.ioArray.map{peBundle => IrrevocableSink(peBundle.out.weight)}
-  val resultOut = c.io.ioArray.map{peBundle => IrrevocableSink(peBundle.out.result)}
-  val controlOut = c.io.ioArray.map{peBundle => IrrevocableSink(peBundle.out.control)}
-  val TEST_CYCLES = 10
-  for(chan <- dataIn.indices) {
-    for (i <- 1 to 10)
-      for (j <- 1 to 10) {
-        dataIn(chan).inputs.enqueue(j)
-        // resultIn(chan).inputs.enqueue(0)
-      }
-    if(chan != dataIn.size - 1)takestep()
+  //val dataOut = c.io.ioArray.map{peBundle => IrrevocableSink(peBundle.out.data)}
+  //val weightOut = c.io.ioArray.map{peBundle => IrrevocableSink(peBundle.out.weight)}
+  //val resultOut = c.io.ioArray.map{peBundle => IrrevocableSink(peBundle.out.result)}
+  //val controlOut = c.io.ioArray.map{peBundle => IrrevocableSink(peBundle.out.control)}
+
+  val TEST_CYCLE = 500
+  reg_poke(c.io.ioArray.head.out.data.ready, 0)
+  takestep()
+  for(i <- 0 until 30) {
+    dataIn.head.inputs.enqueue(i % 9 + 1)
   }
-  //takestep()
-  //takestep()
-  for(chanScan <- 0 until 3) {
-    for(i <- 1 to 5)
-      for(j <- 1 to 3) {
-        weightIn(2 - chanScan).inputs.enqueue(j)
-        if(j == 1)
-          controlIn(chanScan).inputs.enqueue(1)
-        else
-          controlIn(chanScan).inputs.enqueue(0)
-      }
-    //takestep()
+  takesteps(10)()
+  var weightChannelSel = 0
+  for(i <- 0 until TEST_CYCLE) {
+    if(i % 4 == 0){
+      weightIn(weightChannelSel).inputs.enqueue(i % 9 + 1)
+      weightChannelSel = if(weightChannelSel == weightIn.size - 1) 0
+                          else weightChannelSel + 1
+    }
+    if(c.io.ioArray.exists(ioElem => peek(ioElem.in.weight.valid) == 0)) {
+      reg_poke(c.io.ioArray.head.out.data.ready, 0)
+    } else {
+      reg_poke(c.io.ioArray.head.out.data.ready, 1)
+    }
+    takestep()
   }
-  controlIn(2).inputs.enqueue(1)
-  controlIn(1).inputs.enqueue(1)
-  controlIn(0).inputs.enqueue(1)
-  controlIn(2).inputs.enqueue(0)
-  controlIn(1).inputs.enqueue(0)
-  controlIn(0).inputs.enqueue(0)
   takesteps(300)()
 }
 
