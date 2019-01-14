@@ -25,11 +25,11 @@ class PEArrayWrapper(val rows: Int,
   private val weightInQueue = List.tabulate(cols)(col => Queue(io.ioArray(col).in.weight, wrapFIFODepth))
   private val resultOutQueue = List.tabulate(rows)(row => Queue(PEA.io.ioArray(row).out.result, wrapFIFODepth))
 
-  val counter = RegInit(2.U(2.W))
+  val counter = RegInit(0.U(2.W))
   val counterLast = RegNext(counter)
 
   val fire = Cat(PEA.io.ioArray.map{peIO => peIO.in.data.valid & peIO.in.weight.valid & peIO.in.control.valid}).andR()
-  val refreshSpike = counter === 2.U && fire
+  val refreshSpike = counter === 0.U && fire
 
   val PEAValid = Wire(Bool())
   PEAValid := Cat(PEA.io.ioArray.map{
@@ -47,26 +47,31 @@ class PEArrayWrapper(val rows: Int,
     }
   }
 
+  // Connection for data channels
   for (row <- dataInQueue.indices) {
     PEA.io.ioArray(row).in.data <> dataInQueue(row)
-//    PEA.io.ioArray(row).out.data.ready := PEA.io.ioArray(row).in.data.valid &
-//      Cat(PEA.io.ioArray.map(_.in.weight.valid)).andR()
     PEA.io.ioArray(row).out.data.ready := fire
     io.ioArray(row).out.data.bits := 0.U(dataBits.W)
     io.ioArray(row).out.data.valid := false.B
   }
+
+  // Connection for weight channels
   for (col <- weightInQueue.indices) {
     PEA.io.ioArray(col).in.weight <> weightInQueue(col)
     PEA.io.ioArray(col).out.weight.ready := fire
     io.ioArray(col).out.weight.bits := 0.U(dataBits.W)
     io.ioArray(col).out.weight.valid := false.B
   }
+
+  // Connection for result channels
   for (row <- resultOutQueue.indices) {
     io.ioArray(row).out.result <> resultOutQueue(row)
     io.ioArray(row).in.result.ready := true.B
     PEA.io.ioArray(row).in.result.valid := false.B
     PEA.io.ioArray(row).in.result.bits := 0.U
   }
+
+  // Connection for control channels
   for (col <- 0 until cols) {
     PEA.io.ioArray(col).out.control.ready := PEAValid
     PEA.io.ioArray(col).in.control.valid := dataInQueue.head.valid & weightInQueue.head.valid
@@ -85,4 +90,27 @@ class PEArrayWrapper(val rows: Int,
   io.resultFull := Cat(PEA.io.ioArray.map(!_.out.result.ready).reverse)
   io.resultEmpty := Cat(resultOutQueue.map(!_.valid).reverse)
 
+  // Unused data and result channel
+  for (row <- rows until channelNum) {
+    io.ioArray(row).out.data.noenq()
+    io.ioArray(row).out.result.noenq()
+    io.ioArray(row).in.data.nodeq()
+    io.ioArray(row).in.result.nodeq()
+    PEA.io.ioArray(row).in.data.enq(0.U)
+    PEA.io.ioArray(row).in.result.enq(0.U)
+    PEA.io.ioArray(row).out.data.deq()
+    PEA.io.ioArray(row).out.result.deq()
+  }
+
+  // Unused weight and control channel
+  for (col <- cols until channelNum) {
+    io.ioArray(col).out.weight.noenq()
+    io.ioArray(col).out.control.noenq()
+    io.ioArray(col).in.weight.nodeq()
+    io.ioArray(col).in.control.nodeq()
+    PEA.io.ioArray(col).in.weight.enq(0.U)
+    PEA.io.ioArray(col).in.control.enq(false.B)
+    PEA.io.ioArray(col).out.weight.deq()
+    PEA.io.ioArray(col).out.control.deq()
+  }
 }

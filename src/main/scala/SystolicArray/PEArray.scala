@@ -34,19 +34,21 @@ class PEArray(rows: Int, cols: Int, dataBits: Int, resultFIFODepth: Int) extends
     io.ioArray(col).out.weight <> peArray.last(col).io.out.weight
     io.ioArray(col).out.control <> peArray.last(col).io.out.control
   }
-  for(row <- 1 until cols) {
+  for(row <- 1 until rows) {
     peArray(row).head.io.in.weight <> peArray(row - 1).head.io.out.weight
     peArray(row).head.io.in.control <> peArray(row - 1).head.io.out.control
   }
-  if(rows >= cols) {
-    for(chan <- cols until rows) {
-      io.ioArray(chan).out.weight.noenq()
-      io.ioArray(chan).out.control.noenq()
-    }
-  } else {
-    for(chan <- rows until cols) {
-      io.ioArray(chan).out.data.noenq()
-      io.ioArray(chan).out.result.noenq()
-    }
+
+  for(chan <- cols until channelNum) {
+    io.ioArray(chan).in.control.nodeq()
+    io.ioArray(chan).in.weight.nodeq()
+    io.ioArray(chan).out.weight.noenq()
+    io.ioArray(chan).out.control.noenq()
+  }
+  for(chan <- rows until channelNum) {
+    io.ioArray(chan).in.data.nodeq()
+    io.ioArray(chan).in.result.nodeq()
+    io.ioArray(chan).out.data.noenq()
+    io.ioArray(chan).out.result.noenq()
   }
 }
