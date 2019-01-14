@@ -39,17 +39,20 @@ class PEV2(
   io.out.weight.bits := weightBuffer
   io.out.data.bits := dataBuffer
   io.out.result.bits := Mux(queueOut.valid, queueOut.bits, io.in.result.bits)
-  io.out.control.bits := controlBuffer
+  //io.out.control.bits := controlBuffer
+  io.out.control.bits := io.in.control.bits
 
   io.out.data.valid := dataValid
   io.out.weight.valid := weightValid
-  io.out.control.valid := controlValid
+  //io.out.control.valid := controlValid
+  io.out.control.valid := io.in.control.valid
   io.out.result.valid := queueOut.valid | io.in.result.valid
 
   io.in.weight.ready := io.out.weight.fire() | !weightValid
   io.in.data.ready := io.out.data.fire() | !dataValid
   io.in.result.ready := !queueOut.valid
-  io.in.control.ready := io.out.control.fire() | !controlValid
+  //io.in.control.ready := io.out.control.fire() | !controlValid
+  io.in.control.ready := io.out.control.ready
 
   when(io.in.data.fire()) {
     dataValid := true.B
