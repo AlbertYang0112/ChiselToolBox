@@ -14,12 +14,23 @@ class PEAWrapperTests(c: PEArrayWrapper) extends AdvTester(c) {
   val resultOut = c.io.ioArray.map{peBundle => IrrevocableSink(peBundle.out.result)}
   //val controlOut = c.io.ioArray.map{peBundle => IrrevocableSink(peBundle.out.control)}
   val TEST_CYCLES = 10
-  reg_poke(c.io.fifoReset, 1)
-  takestep()
-  reg_poke(c.io.fifoReset, 0)
-  takestep()
-  for(i <- 0 until 200) {
-    val testData = List.tabulate(18)(n => if(n % 3 == 1) 1 else 0)
+  def writeDataAndWeight(data :Int, weight: Int) = {
+    for (chan <- 0 until c.rows) {
+      dataIn(chan).inputs.enqueue(data)
+      takesteps(4)()
+    }
+    for (chan <- 0 until c.cols) {
+      weightIn(chan).inputs.enqueue(weight)
+      takesteps(4)()
+    }
+  }
+  for(cycles <- 0 until TEST_CYCLES) {
+    reg_poke(c.io.fifoReset, 1)
+    takesteps(10)()
+    reg_poke(c.io.fifoReset, 0)
+    takestep()
+    //val testData = List.tabulate(18)(n => if(n % 3 == 0) 1 else 0)
+    val testData = List.tabulate(18)(n => Random.nextInt(10))
     val testWeight = List.fill(3)(1)
     val expectedResult = List.tabulate(15)(
       n => {
@@ -31,31 +42,19 @@ class PEAWrapperTests(c: PEArrayWrapper) extends AdvTester(c) {
     println("Data:" + testData)
     println("Weight:" + testWeight)
     println("Expected:" + expectedResult)
-    for(chan <- 0 until 3) {
-      dataIn(chan).inputs.enqueue(testData(0), testData(1), testData(2))
-      takesteps(3)()
-      weightIn(chan).inputs.enqueue(testWeight(0), testWeight(1), testWeight(2))
-      takesteps(3)()
+    dataIn(0).inputs.enqueue(0, testData(0), testData(1))
+    takesteps(20)()
+    for(i <- 2 until 18) {
+      writeDataAndWeight(testData(i), testWeight((i - 2)% 3))
     }
     takesteps(20)()
-    println("Clear")
-    for(chan <- 0 until 3) {
-      print(s"Result Channel $chan Get: ")
-      while(resultOut(chan).outputs.nonEmpty){
-        print(resultOut(chan).outputs.dequeue() + " ")
-      }
-      print("\n")
-    }
-    for(i <- 3 until 18) {
-      for(chan <- 0 until 3) {
-        dataIn(chan).inputs.enqueue(testData(i))
-        takesteps(3)()
-        weightIn(chan).inputs.enqueue(testWeight(i % 3))
-        takesteps(3)()
-      }
-    }
-    takesteps(20)()
-    for(chan <- 0 until 3) {
+    writeDataAndWeight(0,0)
+    writeDataAndWeight(0, 0)
+    for(chan <- 0 until c.rows) {
+      // Clear the invalid leading result
+      for(pre <- 0 until 3)
+        resultOut(chan).outputs.dequeue()
+
       print(s"Result Channel $chan Get: ")
       while(resultOut(chan).outputs.nonEmpty) {
         print(resultOut(chan).outputs.dequeue() + " ")
