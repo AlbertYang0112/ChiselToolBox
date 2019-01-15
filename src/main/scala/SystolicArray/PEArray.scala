@@ -8,16 +8,14 @@ class PEArray(rows: Int, cols: Int, dataBits: Int, resultFIFODepth: Int) extends
     val ioArray = Vec(channelNum, new PEBundle(dataBits))
   })
   private val peArray = List.fill(rows, cols)(Module(new PEV2(dataBits, resultFIFODepth)))
-  for(row <- 1 until rows) {
-    for(col <- 1 until cols){
-      peArray(row)(col).io.in.data <> peArray(row)(col - 1).io.out.data
-      peArray(row)(col).io.in.result <> peArray(row)(col - 1).io.out.result
+  for(row <- 1 until rows; col <- 1 until cols) {
+    peArray(row)(col).io.in.data <> peArray(row)(col - 1).io.out.data
+    peArray(row)(col).io.in.result <> peArray(row)(col - 1).io.out.result
 
-      peArray(row)(col).io.in.control <> peArray(row - 1)(col).io.out.control
-      peArray(row)(col).io.in.weight <> peArray(row - 1)(col).io.out.weight
-    }
+    peArray(row)(col).io.in.control <> peArray(row - 1)(col).io.out.control
+    peArray(row)(col).io.in.weight <> peArray(row - 1)(col).io.out.weight
   }
-  for(row <- peArray.indices) {
+  for(row <- 0 until rows) {
     peArray(row).head.io.in.data <> io.ioArray(row).in.data
     peArray(row).head.io.in.result <> io.ioArray(row).in.result
     io.ioArray(row).out.data <> peArray(row).last.io.out.data
