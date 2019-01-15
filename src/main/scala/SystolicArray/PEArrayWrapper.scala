@@ -50,7 +50,7 @@ class PEArrayWrapper(val rows: Int,
   // Connection for data channels
   for (row <- dataInQueue.indices) {
     PEA.io.ioArray(row).in.data <> dataInQueue(row)
-    PEA.io.ioArray(row).out.data.ready := fire
+    PEA.io.ioArray(row).out.data.ready := fire | io.fifoReset
     io.ioArray(row).out.data.bits := 0.U(dataBits.W)
     io.ioArray(row).out.data.valid := false.B
   }
@@ -58,7 +58,7 @@ class PEArrayWrapper(val rows: Int,
   // Connection for weight channels
   for (col <- weightInQueue.indices) {
     PEA.io.ioArray(col).in.weight <> weightInQueue(col)
-    PEA.io.ioArray(col).out.weight.ready := fire
+    PEA.io.ioArray(col).out.weight.ready := fire | io.fifoReset
     io.ioArray(col).out.weight.bits := 0.U(dataBits.W)
     io.ioArray(col).out.weight.valid := false.B
   }
