@@ -13,82 +13,86 @@ class PEAWrapperTests(c: PEArrayWrapper) extends AdvTester(c) {
   //val weightOut = c.io.ioArray.map{peBundle => IrrevocableSink(peBundle.out.weight)}
   val resultOut = c.io.ioArray.map{peBundle => IrrevocableSink(peBundle.out.result)}
   //val controlOut = c.io.ioArray.map{peBundle => IrrevocableSink(peBundle.out.control)}
-  val TEST_CYCLES = 10
+  val TEST_CYCLES = 5
+  val KERNEL_SIZE = 3
+  val DATA_SIZE = 18
+  val RESULT_SIZE = DATA_SIZE - KERNEL_SIZE + 1
   def writeDataAndWeight(data :Int, weight: Int) = {
-    for (chan <- 0 until c.rows) {
-      dataIn(chan).inputs.enqueue(data)
-      takesteps(4)()
-    }
-    for (chan <- 0 until c.cols) {
-      weightIn(chan).inputs.enqueue(weight)
-      takesteps(4)()
-    }
+    if(peek(c.io.fifoResetting) == 0)
+      for (chan <- 0 until c.rows) {
+        dataIn(chan).inputs.enqueue(data)
+        takesteps(4)()
+      }
+      for (chan <- 0 until c.cols) {
+        //weightIn(chan).inputs.enqueue(weight)
+        //takesteps(4)()
+      }
   }
   for(cycles <- 0 until TEST_CYCLES) {
+    dataIn.foreach(channel => channel.inputs.clear())
+    weightIn.foreach(channel => channel.inputs.clear())
+    resultIn.foreach(channel => channel.inputs.clear())
+    takestep()
     reg_poke(c.io.fifoReset, 1)
-    takesteps(10)()
+    reg_poke(c.io.kernelSize, KERNEL_SIZE)
+    reg_poke(c.io.repeatWeight, 0)
+    takestep()
     reg_poke(c.io.fifoReset, 0)
     takestep()
+    while(peek(c.io.fifoResetting) == 1) {
+      takestep()
+    }
+    reg_poke(c.io.stall, 1)
+    takestep()
+    // Generate the test data
     //val testData = List.tabulate(18)(n => if(n % 3 == 0) 1 else 0)
-    val testData = List.tabulate(18)(n => Random.nextInt(10))
-    val testWeight = List.fill(3)(1)
-    val expectedResult = List.tabulate(15)(
+    val testData = List.tabulate(DATA_SIZE)(n => Random.nextInt(100))
+    //val testWeight = List.fill(3)(1)
+    val testWeight = List.tabulate(KERNEL_SIZE)(n => Random.nextInt(100))
+    val expectedResult = List.tabulate(RESULT_SIZE)(
       n => {
         var sum = 0
-        for(i <- 0 until 3)
+        for(i <- 0 until KERNEL_SIZE)
           sum += testData(i + n) * testWeight(i)
         sum
       })
     println("Data:" + testData)
     println("Weight:" + testWeight)
     println("Expected:" + expectedResult)
-    dataIn(0).inputs.enqueue(0, testData(0), testData(1))
-    takesteps(20)()
-    for(i <- 2 until 18) {
-      writeDataAndWeight(testData(i), testWeight((i - 2)% 3))
+
+    for (chan <- 0 until 3) {
+      weightIn(chan).inputs.enqueue(0)
+      for (i <- 0 until 3)
+        weightIn(chan).inputs.enqueue(testWeight(i))
     }
+    takesteps(10)()
+    reg_poke(c.io.repeatWeight, 1)
+    takestep()
+    dataIn(0).inputs.enqueue(0)
+    writeDataAndWeight(testData(0), 0)
+    writeDataAndWeight(testData(1), 0)
+    reg_poke(c.io.stall, 0)
+    takestep()
+    takesteps(20)()
+    for(i <- 2 until DATA_SIZE) {
+      writeDataAndWeight(testData(i), testWeight((i - 2) % KERNEL_SIZE))
+    }
+
     takesteps(20)()
     writeDataAndWeight(0,0)
     writeDataAndWeight(0, 0)
+    writeDataAndWeight(0, 0)
+    takesteps(20)()
     for(chan <- 0 until c.rows) {
       // Clear the invalid leading result
-      for(pre <- 0 until 3)
+      for(pre <- 0 until 3 if(resultOut(chan).outputs.nonEmpty))
         resultOut(chan).outputs.dequeue()
 
-      print(s"Result Channel $chan Get: ")
-      while(resultOut(chan).outputs.nonEmpty) {
-        print(resultOut(chan).outputs.dequeue() + " ")
-      }
-      print("\n")
+      val resultGet = resultOut(chan).outputs.toList
+      resultOut(chan).outputs.clear()
+      println(s"Result Channel $chan Get: " + (resultGet take RESULT_SIZE))
+      expect((resultGet take RESULT_SIZE) == expectedResult, s"Cycle $cycles")
     }
-    /*
-    val writeSequence = Random.shuffle(List.range(0, 6))
-    for(chan <- writeSequence.indices) {
-      val targetChan = writeSequence(chan) % 3
-      if(writeSequence(chan) < 3) {
-        dataIn(targetChan).inputs.enqueue((i + targetChan) % 3 + 1)
-        //println("Data Channel " + targetChan + " <- " + ((targetChan + i) % 3 + 1))
-      } else {
-        weightIn(targetChan).inputs.enqueue((i + targetChan) % 3 + 1)
-        //println("Weight Channel " + targetChan + " <- " + ((targetChan + i) % 3 + 1))
-      }
-      takesteps(1)()
-      for(chan <- resultOut.indices) {
-        if(resultOut(chan).outputs.nonEmpty && chan == 0) {
-          println("Result Channel " + chan + "  " + resultOut(chan).outputs.dequeue())
-        }
-      }
-      */
-    /*
-    for(chan <- dataIn.indices) {
-      dataIn(chan).inputs.enqueue((i + chan) % 3 + 1)
-      takesteps(1)()
-    }
-    for(chan <- weightIn.indices) {
-      weightIn(chan).inputs.enqueue((i + chan) % 3 + 1)
-      takesteps(1)()
-    }
-    */
     takesteps(5)()
   }
   takesteps(100)()
