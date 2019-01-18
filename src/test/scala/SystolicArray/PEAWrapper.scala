@@ -13,10 +13,7 @@ class PEAWrapperTests(c: PEArrayWrapper) extends AdvTester(c) {
   //val weightOut = c.io.ioArray.map{peBundle => IrrevocableSink(peBundle.out.weight)}
   val resultOut = c.io.ioArray.map{peBundle => IrrevocableSink(peBundle.out.result)}
   //val controlOut = c.io.ioArray.map{peBundle => IrrevocableSink(peBundle.out.control)}
-  val TEST_CYCLES = 1000
-  val KERNEL_SIZE = 10
-  val DATA_SIZE = 100 * KERNEL_SIZE
-  val RESULT_SIZE = DATA_SIZE - KERNEL_SIZE + 1
+  val TEST_CYCLES = 10000
   def writeDataAndWeight(data :Int, weight: Int) = {
     if(peek(c.io.fifoResetting) == 0)
       for (chan <- 0 until c.rows) {
@@ -29,6 +26,10 @@ class PEAWrapperTests(c: PEArrayWrapper) extends AdvTester(c) {
       //}
   }
   for(cycles <- 0 until TEST_CYCLES) {
+    val KERNEL_SIZE = Random.nextInt(10) + 1
+    val DATA_SIZE = (1 + Random.nextInt(100)) * KERNEL_SIZE
+    //val DATA_SIZE = KERNEL_SIZE
+    val RESULT_SIZE = DATA_SIZE - KERNEL_SIZE + 1
     dataIn.foreach(channel => channel.inputs.clear())
     weightIn.foreach(channel => channel.inputs.clear())
     resultIn.foreach(channel => channel.inputs.clear())
@@ -79,7 +80,7 @@ class PEAWrapperTests(c: PEArrayWrapper) extends AdvTester(c) {
     takesteps(1)()
     for(i <- 0 until c.cols - 1) {
       //writeDataAndWeight(testData(i), 0)
-      dataIn(0).inputs.enqueue(testData(i))
+      dataIn(0).inputs.enqueue(testData(i % DATA_SIZE))
       takesteps(4)()
     }
 //    for(i <- 0 until c.cols) {
@@ -87,8 +88,8 @@ class PEAWrapperTests(c: PEArrayWrapper) extends AdvTester(c) {
 //      takesteps(4)()
 //    }
 //    takestep()
-    // writeDataAndWeight(testData(0), 0)
-    // writeDataAndWeight(testData(1), 0)
+//    writeDataAndWeight(testData(0), 0)
+//    writeDataAndWeight(testData(1), 0)
 
     reg_poke(c.io.stall, 0)
     takestep()
@@ -110,15 +111,16 @@ class PEAWrapperTests(c: PEArrayWrapper) extends AdvTester(c) {
     takesteps(20)()
     for(chan <- 0 until c.rows) {
       // Clear the invalid leading result
-       for(pre <- 0 until c.cols if(resultOut(chan).outputs.nonEmpty))
+       for(pre <- 0 until KERNEL_SIZE if(resultOut(chan).outputs.nonEmpty))
          resultOut(chan).outputs.dequeue()
 
       val resultGet = resultOut(chan).outputs.toList
       resultOut(chan).outputs.clear()
       println(s"Result Channel $chan Get: " + (resultGet take RESULT_SIZE))
+      if(expect(resultGet.size >= expectedResult.size, s"Cycle $cycles Result length doesn't match!"))
       for (i <- expectedResult.indices) {
         expect(resultGet(i) == expectedResult(i),
-          msg = s"No. $i doesn't match, Expected " + expectedResult(i) + "Got " + resultGet(i))
+          msg = s"Cycle$cycles No.$i doesn't match, Expected " + expectedResult(i) + "Got " + resultGet(i))
       }
       //expect((resultGet take RESULT_SIZE) == expectedResult, s"Cycle $cycles")
     }
