@@ -82,7 +82,7 @@ class PEArrayWrapper(val rows: Int,
   }
 
 
-  val counter = RegInit(0.U(2.W))
+  val counter = RegInit(0.U(4.W))
   val counterLast = RegNext(counter)
 
   val fire = !io.stall & Cat(PEA.io.ioArray.map{peIO => peIO.in.data.valid & peIO.in.weight.valid & peIO.in.control.valid}).andR()
@@ -132,7 +132,7 @@ class PEArrayWrapper(val rows: Int,
   for (col <- 0 until cols) {
     PEA.io.ioArray(col).out.control.ready := PEAValid
     PEA.io.ioArray(col).in.control.valid := dataInQueue.head.valid & weightInQueue.head.valid
-    PEA.io.ioArray(col).in.control.bits := refreshSpike
+    PEA.io.ioArray(col).in.control.bits := refreshSpike & (col.U >= (cols.U - kernelSize))
     io.ioArray(col).out.control.bits := false.B
     io.ioArray(col).out.control.valid := true.B
     io.ioArray(col).in.control.ready := true.B

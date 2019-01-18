@@ -22,7 +22,7 @@ object Launcher {
       }
     },
     "PEArrayWrapper" -> { manager: TesterOptionsManager =>
-      Driver.execute(() => new PEArrayWrapper(1, 3, 32, 2, 5), manager) {
+      Driver.execute(() => new PEArrayWrapper(1, 10, 32, 2, 16), manager) {
         c => new PEAWrapperTests(c)
       }
     }
