@@ -26,7 +26,7 @@ class PEArrayWrapperV2(
     // Data
     val dataIn = DeqIO(UInt(dataWidth.W))
     val weightIn = Vec(weightChanNum, DeqIO(UInt(dataWidth.W)))
-    val resultOut = EnqIO(UInt(dataWidth.W))
+    val resultOut = Vec(rows, EnqIO(UInt(dataWidth.W)))
     // Control
     val weightUpdate = Input(Bool())
     val clearData = Input(Bool())
@@ -50,9 +50,16 @@ class PEArrayWrapperV2(
   val dataInQueue = Queue(io.dataIn, wrapFIFODepth)
   //val dataChanQueue = List.fill(rows)(Queue(dataInQueue, chanFIFODepth))
   val weightInQueue = List.tabulate(cols)(col => Queue(weightInQueueInput(col), chanFIFODepth))
-  val resultOutQueue = Queue(resultOutQueueInput, wrapFIFODepth)
-  val resultChanQueue = List.tabulate(rows)(row => Queue(PEA.io.ioArray(row).out.result, chanFIFODepth))
+  val resultOutQueue = List.tabulate(rows)(row => Queue(PEA.io.ioArray(row).out.result, wrapFIFODepth))
+  //val resultOutQueue = Queue(resultOutQueueInput, wrapFIFODepth)
+  //val resultChanQueue = List.tabulate(rows)(row => Queue(PEA.io.ioArray(row).out.result, chanFIFODepth))
 
+  for(row <- 0 until rows) {
+    io.resultOut(row).bits := resultOutQueue(row).bits
+    io.resultOut(row).valid := resultOutQueue(row).valid
+    resultOutQueue(row).ready := io.resultOut(row).ready
+    //io.resultOut(row) <> resultOutQueue(row)
+  }
 
 
   val weightFlow = Vec(cols, RegInit(false.B))
