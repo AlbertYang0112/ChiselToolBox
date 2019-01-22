@@ -122,7 +122,10 @@ class PEArrayWrapper(val rows: Int,
 
   // Connection for result channels
   for (row <- resultOutQueue.indices) {
-    io.ioArray(row).out.result <> resultOutQueue(row)
+    io.ioArray(row).out.result.valid := resultOutQueue(row).valid & !fifoResetting
+    io.ioArray(row).out.result.bits := resultOutQueue(row).bits
+    resultOutQueue(row).ready := io.ioArray(row).out.result.ready | fifoResetting
+
     io.ioArray(row).in.result.ready := true.B
     PEA.io.ioArray(row).in.result.valid := false.B
     PEA.io.ioArray(row).in.result.bits := 0.U
