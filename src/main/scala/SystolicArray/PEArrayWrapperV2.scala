@@ -17,10 +17,10 @@ class PEArrayWrapperV2(
                         val weightChanNum: Int,
                         val rows: Int,
                         val cols: Int,
-                        val PEresultFIFODepth: Int,
+                        val PEResultFIFODepth: Int,
                         val wrapFIFODepth: Int,
                         val chanFIFODepth: Int
-                      ) extends Module with PEAWState with ControlBit {
+                      ) extends Module with PEAWState {
 
   val io = IO(new Bundle{
     // Data
@@ -41,7 +41,7 @@ class PEArrayWrapperV2(
 
   val PEA = Module(new PEArrayV2(
     rows = rows, cols = cols,
-    dataBits = dataWidth, resultFIFODepth = PEresultFIFODepth))
+    dataBits = dataWidth, resultFIFODepth = PEResultFIFODepth))
 
   val state = RegInit(IDLE.U(STATE_WIDTH.W))
 
