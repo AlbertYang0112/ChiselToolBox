@@ -2,10 +2,10 @@ package SystolicArray
 
 import chisel3._
 
-class PEArrayV2(rows: Int, cols: Int, dataBits: Int, resultFIFODepth: Int) extends Module with ControlBit {
+class PEArrayV2(rows: Int, cols: Int, dataBits: Int, resultFIFODepth: Int) extends Module {
   private val channelNum = if(rows > cols) rows else cols
   val io = IO(new Bundle{
-    val ioArray = Vec(channelNum, new PEBundleV2(dataBits, CONTROL_WIDTH))
+    val ioArray = Vec(channelNum, new PEBundleV2(dataBits))
   })
   private val peArray = List.fill(rows, cols)(Module(new PEV3(dataBits, resultFIFODepth)))
   for(row <- 1 until rows; col <- 1 until cols) {

@@ -3,22 +3,26 @@ package SystolicArray
 import chisel3._
 import chisel3.util.{DeqIO, EnqIO, Queue}
 
+class ControlBundle extends Bundle {
+  val outputSum = Bool()
+  val calculate = Bool()
+  val clearSum = Bool()
+}
+
 class PEBundleOutputV2(
-                        val dataBits: Int,
-                        val controlBits: Int
+                        val dataBits: Int
                       ) extends Bundle {
   val data = EnqIO(UInt(dataBits.W))
   val weight = EnqIO(UInt(dataBits.W))
   val result = EnqIO(UInt(dataBits.W))
-  val control = EnqIO(UInt(controlBits.W))
+  val control = EnqIO(new ControlBundle)
 }
 
 class PEBundleV2(
-                val dataBits: Int,
-                val controlBits: Int
+                val dataBits: Int
                 ) extends Bundle {
-  val in = Flipped(new PEBundleOutputV2(dataBits, controlBits))
-  val out = new PEBundleOutputV2(dataBits, controlBits)
+  val in = Flipped(new PEBundleOutputV2(dataBits))
+  val out = new PEBundleOutputV2(dataBits)
 }
 
 trait ControlBit {
@@ -32,7 +36,7 @@ class PEV3(
             dataBits: Int,
             resultBufferDepth: Int
           ) extends Module with ControlBit {
-  val io = IO(new PEBundleV2(dataBits, CONTROL_WIDTH))
+  val io = IO(new PEBundleV2(dataBits))
 
   // Pipeline Buffers
   val dataBuffer = RegInit(0.U(dataBits.W))
@@ -49,15 +53,15 @@ class PEV3(
 
   val partialSum = RegInit(0.U(dataBits.W))
   val mulAddResult = Wire(UInt(dataBits.W))
-  val addRhs = Mux(io.in.control.bits(CLEAR_SUM), 0.U(dataBits.W), partialSum)
+  val addRhs = Mux(io.in.control.bits.clearSum, 0.U(dataBits.W), partialSum)
   val inputValid = io.in.data.valid & io.in.weight.valid & io.in.control.valid
   val outputReady = io.out.data.ready & io.out.weight.ready & io.out.control.ready
   mulAddResult := io.in.data.bits * io.in.weight.bits + addRhs
-  partialSum := Mux(io.in.control.bits(CALCULATE),
+  partialSum := Mux(io.in.control.bits.calculate,
     mulAddResult, partialSum)
   queueIn.bits := partialSum
   //queueIn.valid := io.in.control.bits & inputValid
-  queueIn.valid := io.in.control.bits(OUTPUT_SUM)
+  queueIn.valid := io.in.control.bits.outputSum
 
   queueOut <> Queue(queueIn, resultBufferDepth)
   queueOut.ready := io.out.result.ready
