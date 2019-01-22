@@ -154,11 +154,11 @@ class PEArrayWrapperV2(
 
   // Weight Repeat
   for(col <- 0 until cols) {
-    weightInQueueInput(col).valid := Mux(io.repeat,
-      PEA.io.ioArray(col).out.weight.fire(), io.weightIn(col).valid)
-    weightInQueueInput(col).bits := Mux(io.repeat,
-      PEA.io.ioArray(col).out.weight.bits, io.weightIn(col).bits)
-    io.weightIn(col).ready := Mux(io.repeat,
+    weightInQueueInput(col).valid := Mux(repeat,
+      weightInQueue(col).fire(), io.weightIn(col).valid)
+    weightInQueueInput(col).bits := Mux(repeat,
+      weightInQueue(col).bits, io.weightIn(col).bits)
+    io.weightIn(col).ready := Mux(repeat,
       false.B, weightInQueueInput(col).ready
     )
   }
