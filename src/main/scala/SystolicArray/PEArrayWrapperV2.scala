@@ -250,5 +250,13 @@ class PEArrayWrapperV2(
     PEA.io.ioArray(row).in.data.valid := Mux(state === DATA_CLEAR.U & firstFire, true.B, dataInQueue.valid)
     PEA.io.ioArray(row).out.data.ready := dataFlow(row)
   }
+  dataInQueue.ready := PEA.io.ioArray.head.in.data.ready
+
+  // Unused IO
+  for(row <- 0 until rows) {
+    //PEA.io.ioArray(row).in.result.enq(0.U(dataWidth.W))
+    PEA.io.ioArray(row).in.result.valid := false.B
+    PEA.io.ioArray(row).in.result.bits := 0.U(dataWidth.W)
+  }
 
 }
