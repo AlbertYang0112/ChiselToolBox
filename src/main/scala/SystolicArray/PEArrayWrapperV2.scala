@@ -14,6 +14,8 @@ trait PEAWState {
   val DATA_CLEAR =        4
 }
 
+// Todo: Add padding control(the module now is with padding).
+
 class PEArrayWrapperV2(
                         val dataWidth: Int,
                         val weightWidth: Int,
@@ -40,6 +42,7 @@ class PEArrayWrapperV2(
     val strideX = Input(UInt(8.W))
     val strideY = Input(UInt(8.W))
     val flush = Input(Bool())
+    val activeChan = Output(UInt(rows.W))
   })
 
   val PEA = Module(new PEArrayV2(
@@ -77,6 +80,8 @@ class PEArrayWrapperV2(
   private val resultAllReady = Cat(PEA.io.ioArray.map(_.out.result.ready)).andR()
   private val weightAllValid = Cat(PEA.io.ioArray.map(_.in.weight.valid)).andR()
   private val allChannelReady = dataInQueue.valid & weightAllValid & resultAllReady
+  private val anyDataChannelFire = Cat(PEA.io.ioArray.map(_.in.data.fire())).orR()
+  private val anyWeightChannelFire = Cat(PEA.io.ioArray.map(_.in.weight.fire())).orR()
   val weightFlowEnable = Mux(state === DATA_FLOW.U, allChannelReady, true.B)
   val dataFlowEnable = Mux(state === DATA_FLOW.U, allChannelReady, false.B)
   val weightRefreshPrev = RegNext(io.weightUpdate)
@@ -84,7 +89,16 @@ class PEArrayWrapperV2(
   private val weightRefreshDone = !io.weightUpdate & weightRefreshPrev
   val repeat = RegInit(false.B)
 
-  val flowCounter = RegInit(0.U(5.W))
+  val flowCounter = RegInit(0.U(5.W))           //  Todo: Parameterize the width
+
+  // Data allocation
+  val dataChanFlowCounter = Mem(cols, UInt(3.W))   // Todo: Parameterize the width
+  val dataChanLastActive = RegInit(0.U(3.W))
+  val activeDataChannel = List.fill(cols)(Wire(Bool()))
+  val dataReallocateCounter = RegInit(0.U(3.W))
+
+  val strideX = RegInit(1.U(3.W))               // Todo: Parameterize the width
+  val kernelSizeX = RegInit((cols - 1).U(3.W))  // Todo: Parameterize the width
 
   dataInQueueInput.bits := io.dataIn.bits
   dataInQueueInput.valid := Mux(state === DATA_FLOW.U, io.dataIn.valid, false.B)
@@ -141,6 +155,8 @@ class PEArrayWrapperV2(
   } .elsewhen(state === WEIGHT_QUEUE_FILL.U) {
     when(weightRefreshDone) {
       state := WEIGHT_REFRESH.U
+      strideX := io.strideX     // Todo: Check the strideX
+      kernelSizeX := io.kernelSizeX // Todo: Check the kernelSizeX
       flowCounter := 0.U
       repeat := true.B
     } .otherwise {
@@ -234,9 +250,37 @@ class PEArrayWrapperV2(
   for(row <- 0 until rows) {
     PEA.io.ioArray(row).in.data.bits := Mux(state === DATA_CLEAR.U & firstFire, 0.U(dataWidth.W), dataInQueue.bits)
     PEA.io.ioArray(row).in.data.valid := Mux(state === DATA_CLEAR.U & firstFire, true.B, dataInQueue.valid)
-    PEA.io.ioArray(row).out.data.ready := dataFlow(row)
+    PEA.io.ioArray(row).out.data.ready := dataFlow(row) & activeDataChannel(row)
   }
-  dataInQueue.ready := PEA.io.ioArray.head.in.data.ready
+  dataInQueue.ready := Cat(PEA.io.ioArray.map(_.in.data.ready)).orR()
+
+  // Data allocation
+  // Global re-allocation counter
+  when(state === WEIGHT_REFRESH.U) {
+    for(row <- 0 until rows) {
+      dataChanFlowCounter(row) := kernelSizeX
+    }
+  }
+  when(state === WEIGHT_REFRESH.U | state === DATA_FLOW.U | state === DATA_CLEAR.U) {
+    when(anyDataChannelFire | anyWeightChannelFire) {
+      dataReallocateCounter := Mux(dataReallocateCounter === strideX - 1.U, 0.U, dataReallocateCounter + 1.U)
+      when(dataReallocateCounter === 0.U) {
+        // Reallocate
+        dataChanFlowCounter(dataChanLastActive) := 0.U
+        dataChanLastActive := dataChanLastActive + strideX -
+          Mux(dataChanLastActive +  strideX >= kernelSizeX, kernelSizeX, 0.U)
+      }
+    }
+    for(row <- 0 until rows) {
+      when(PEA.io.ioArray(row).in.data.fire() & dataChanFlowCounter(row) =/= kernelSizeX) {
+        dataChanFlowCounter(row) := dataChanFlowCounter(row) + 1.U
+      }
+    }
+  }
+  for(row <- 0 until rows) {
+    activeDataChannel(row) := dataChanFlowCounter(row) =/= kernelSizeX
+  }
+  io.activeChan := Cat(activeDataChannel)
 
   // Unused IO
   for(row <- 0 until rows) {
