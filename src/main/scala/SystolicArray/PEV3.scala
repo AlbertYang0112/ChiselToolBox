@@ -46,7 +46,10 @@ class PEV3(
   val weightBuffer = RegInit(0.U(weightWidth.W))
   val resultWidth = dataWidth + weightWidth
   //val resultBuffer = RegNext(0.U(dataBits.W))
-  //val controlBuffer = RegInit(0.U(dataBits.W))
+  //val controlBuffer = RegInit(0.U(CONTROL_WIDTH.W))
+  val controlCalculateBuffer = RegInit(false.B)
+  val controlOutputSumBuffer = RegInit(false.B)
+  val controlClearSumBuffer = RegInit(true.B)
 
   val queueIn = Wire(EnqIO(UInt(resultWidth.W)))
   val queueOut = Wire(DeqIO(UInt(resultWidth.W)))
@@ -61,11 +64,18 @@ class PEV3(
   val inputValid = io.in.data.valid & io.in.weight.valid & io.in.control.valid
   val outputReady = io.out.data.ready & io.out.weight.ready & io.out.control.ready
   mulAddResult := io.in.data.bits * io.in.weight.bits + addRhs
-  partialSum := Mux(io.in.control.bits.calculate,
-    mulAddResult, partialSum)
+  when(io.in.control.valid) {
+    when(io.in.control.bits.calculate) {
+      partialSum := mulAddResult
+    } .elsewhen(io.in.control.bits.clearSum) {
+      partialSum := 0.U
+    }
+  }
+//  partialSum := Mux(io.in.control.bits.calculate & io.in.control.valid,
+//    mulAddResult, partialSum)
   queueIn.bits := partialSum
   //queueIn.valid := io.in.control.bits & inputValid
-  queueIn.valid := io.in.control.bits.outputSum
+  queueIn.valid := io.in.control.bits.outputSum & io.in.control.valid
 
   queueOut <> Queue(queueIn, resultBufferDepth)
   queueOut.ready := io.out.result.ready
@@ -74,7 +84,10 @@ class PEV3(
   io.out.data.bits := dataBuffer
   io.out.result.bits := Mux(queueOut.valid, queueOut.bits, io.in.result.bits)
   //io.out.control.bits := controlBuffer
-  io.out.control.bits := io.in.control.bits
+  //io.out.control.bits := io.in.control.bits
+  io.out.control.bits.clearSum := controlClearSumBuffer
+  io.out.control.bits.calculate := controlCalculateBuffer
+  io.out.control.bits.outputSum := controlOutputSumBuffer
 
   io.out.data.valid := dataValid
   io.out.weight.valid := weightValid
@@ -98,10 +111,13 @@ class PEV3(
     weightBuffer := io.in.weight.bits
   }
 
-//  when(io.out.control.ready) {
-//    controlValid := io.in.control.valid
-//    controlBuffer := io.in.control.bits
-//  }
+  when(io.out.control.ready) {
+    //controlValid := io.in.control.valid
+    //controlBuffer := io.in.control.bits
+    controlCalculateBuffer := io.in.control.bits.calculate
+    controlOutputSumBuffer := io.in.control.bits.outputSum
+    controlClearSumBuffer := io.in.control.bits.clearSum
+  }
 
   when(queueOut.valid | io.in.result.valid) {
     resultValid := true.B

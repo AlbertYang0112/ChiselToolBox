@@ -36,7 +36,6 @@ class PEArrayWrapperV2(
     // Control
     val weightUpdate = Input(Bool())
     val weightUpdateReady = Output(Bool())
-    val clearData = Input(Bool())
     val kernelSizeX = Input(UInt(8.W))
     val kernelSizeY = Input(UInt(8.W))
     val strideX = Input(UInt(8.W))
@@ -73,6 +72,7 @@ class PEArrayWrapperV2(
 
   private val weightFlow = List.fill(cols)(Wire(Bool()))
   private val dataFlow = List.fill(rows)(Wire(Bool()))
+  private val controlFlow = List.fill(rows)(Wire(Bool()))
   private val controlOutputSum = List.fill(cols)(Wire(Bool()))
   private val controlCalculate = List.fill(cols)(Wire(Bool()))
   private val controlClearSum = List.fill(cols)(Wire(Bool()))
@@ -108,20 +108,28 @@ class PEArrayWrapperV2(
     when(cond) {
       dataFlow.foreach(_ := true.B)
       weightFlow.foreach(_ := true.B)
-      when(PEA.io.ioArray.head.in.data.fire()) {
+      when(Mux(state === DATA_FLOW.U, PEA.io.ioArray.head.in.data.fire(), PEA.io.ioArray.head.in.data.ready)) {
         flowCounter := Mux(flowCounter === (cols - 1).U, 0.U, flowCounter + 1.U)
+        enableAllControl
+        setAllControlFlow(true)
+      } .otherwise {
+        flowCounter := flowCounter
+        disableAllControl
+        setAllControlFlow(false)
       }
-      for(col <- 0 until cols) {
-        controlCalculate(col) := true.B
-        controlClearSum(col) := Mux(col.U === flowCounter, true.B, false.B)
-        controlOutputSum(col) := Mux(col.U === flowCounter, true.B, false.B) & !firstFire
+      controlCalculate.foreach(_ := true.B)
+      for(col <- 0 until cols - 1) {
+        controlClearSum(col) := Mux((col + 1).U === flowCounter, true.B, false.B)
+        controlOutputSum(col) := Mux((col + 1).U === flowCounter, true.B, false.B)
       }
+      controlClearSum(cols - 1) := Mux(flowCounter === 0.U, true.B, false.B) & !firstFire
+      controlOutputSum(cols - 1) := Mux(0.U === flowCounter, true.B, false.B) & !firstFire
     } .otherwise {
-      controlCalculate.foreach(_ := false.B)
-      controlOutputSum.foreach(_ := false.B)
-      controlClearSum.foreach(_ := false.B)
-      dataFlow.foreach(_ := false.B)
-      weightFlow.foreach(_ := false.B)
+      setAllDataFlow(false)
+      setAllWeightFlow(false)
+      setAllChannelControl(calculate = false, outputSum = false, clearSum = false)
+      setAllControlFlow(false)
+      disableAllControl
     }
     cond
   }
@@ -137,6 +145,21 @@ class PEArrayWrapperV2(
   def setAllDataFlow(flow: Boolean) = {
     dataFlow.foreach(_ := flow.B)
   }
+  def setAllControlFlow(flow: Boolean) = {
+    controlFlow.foreach(_ := flow.B)
+  }
+  def enableControl(chan: Int) = {
+    PEA.io.ioArray(chan).in.control.valid := true.B
+  }
+  def disableControl(chan: Int) = {
+    PEA.io.ioArray(chan).in.control.valid := false.B
+  }
+  def enableAllControl = {
+    PEA.io.ioArray.foreach(_.in.control.valid := true.B)
+  }
+  def disableAllControl = {
+    PEA.io.ioArray.foreach(_.in.control.valid := false.B)
+  }
   io.weightUpdateReady := state === WEIGHT_QUEUE_FILL.U
 
   when(state === WEIGHT_CLEAR.U) {
@@ -150,7 +173,11 @@ class PEArrayWrapperV2(
         state := WEIGHT_QUEUE_FILL.U
       }
     }
+
     setAllChannelControl(calculate = false, outputSum = false, clearSum = true)
+    setAllControlFlow(true)
+    enableAllControl
+
     setAllDataFlow(false)
   } .elsewhen(state === WEIGHT_QUEUE_FILL.U) {
     when(weightRefreshDone) {
@@ -163,6 +190,8 @@ class PEArrayWrapperV2(
       repeat := false.B
     }
     setAllChannelControl(calculate = false, outputSum = false, clearSum = true)
+    setAllControlFlow(true)
+    enableAllControl
     setAllDataFlow(false)
     setAllWeightFlow(false)
   } .elsewhen(state === WEIGHT_REFRESH.U) {
@@ -187,14 +216,18 @@ class PEArrayWrapperV2(
     } .otherwise {
       setAllWeightFlow(false)
     }
-    setAllChannelControl(calculate = false, outputSum = false, clearSum = true)
     setAllDataFlow(false)
+    setAllChannelControl(calculate = true, outputSum = false, clearSum = false)
+    setAllControlFlow(true)
+    disableAllControl
   } .elsewhen(state === DATA_FLOW.U) {
-    when(weightRefreshReq | io.clearData) {
+    when(weightRefreshReq) {
       state := DATA_CLEAR.U
       setAllDataFlow(false)
       setAllWeightFlow(false)
-      setAllChannelControl(calculate = false, outputSum = false, clearSum = true)
+      setAllChannelControl(calculate = false, outputSum = false, clearSum = false)
+      setAllControlFlow(false)
+      disableAllControl
       firstFire := false.B
     } .otherwise {
       dataChannelEnq(cond = dataInQueue.valid & resultAllReady)
@@ -203,27 +236,61 @@ class PEArrayWrapperV2(
       }
     }
   } .elsewhen(state === DATA_CLEAR.U) {
-    when(!firstFire) {
+    when(Cat(PEA.io.ioArray.map(_.out.data.valid)).orR() | flowCounter =/= 0.U) {
+      dataChannelEnq(cond = resultAllReady)
+    } .otherwise {
+      state := WEIGHT_CLEAR.U
+      setAllDataFlow(false)
+      setAllWeightFlow(false)
+      //setAllChannelControl(calculate = false, outputSum = false, clearSum = true)
+      for(col <- 0 until cols - 1) {
+        controlCalculate(col) := false.B
+        controlOutputSum(col) := false.B
+        controlClearSum(col) := false.B
+        //disableControl(col)
+      }
+      controlCalculate(cols - 1) := false.B
+      controlOutputSum(cols - 1) := true.B
+      controlClearSum(cols - 1) := false.B
+      //enableControl(cols - 1)
+      setAllControlFlow(true)
+      enableAllControl
+    }
+    /*when(!firstFire) {
       // Clear the data remained in the queue
-      dataChannelEnq(cond = dataInQueue.valid & resultAllReady)
-      when(!dataInQueue.valid) {
-        firstFire := true.B
+      when(!Cat(PEA.io.ioArray.map(_.out.data.valid)).orR) {
+        when(flowCounter === 0.U) {
+          state := WEIGHT_CLEAR.U
+        } .otherwise {
+          firstFire := true.B
+        }
+        setAllDataFlow(false)
+        setAllWeightFlow(false)
+        setAllChannelControl(calculate = false, outputSum = false, clearSum = false)
+        disableAllControl
+        setAllControlFlow(false)
+      } .otherwise {
+        dataChannelEnq(cond = dataInQueue.valid & resultAllReady)
       }
     } .elsewhen(flowCounter === 0.U) {
       state := WEIGHT_CLEAR.U
       setAllDataFlow(false)
       setAllWeightFlow(false)
       setAllChannelControl(calculate = false, outputSum = true, clearSum = true)
+      setAllControlFlow(true)
+      disableAllControl
     } .otherwise {
       // Push 0 into the dataChannel
       dataChannelEnq(cond = resultAllReady)
-    }
+    } */
   } .otherwise {
     state := DATA_CLEAR.U
     firstFire := false.B
     setAllDataFlow(false)
     setAllWeightFlow(false)
     setAllChannelControl(calculate = false, outputSum = false, clearSum = true)
+    setAllControlFlow(true)
+    disableAllControl
   }
 
   // Link the weight channel
@@ -233,8 +300,8 @@ class PEArrayWrapperV2(
     PEA.io.ioArray(col).in.control.bits.outputSum := controlOutputSum(col)
     PEA.io.ioArray(col).in.control.bits.calculate := controlCalculate(col)
     PEA.io.ioArray(col).in.control.bits.clearSum := controlClearSum(col)
-    PEA.io.ioArray(col).in.control.valid := true.B
-    PEA.io.ioArray(col).out.control.ready := true.B
+    //PEA.io.ioArray(col).in.control.valid := true.B
+    PEA.io.ioArray(col).out.control.ready := controlFlow(col)
   }
 
   // Weight Repeat
@@ -248,9 +315,9 @@ class PEArrayWrapperV2(
     )
   }
   for(row <- 0 until rows) {
-    PEA.io.ioArray(row).in.data.bits := Mux(state === DATA_CLEAR.U & firstFire, 0.U(dataWidth.W), dataInQueue.bits)
-    PEA.io.ioArray(row).in.data.valid := Mux(state === DATA_CLEAR.U & firstFire, true.B, dataInQueue.valid)
-    PEA.io.ioArray(row).out.data.ready := dataFlow(row) & activeDataChannel(row)
+    PEA.io.ioArray(row).in.data.bits := Mux(state === DATA_CLEAR.U & !dataInQueue.valid, 0.U(dataWidth.W), dataInQueue.bits)
+    PEA.io.ioArray(row).in.data.valid := Mux(state === DATA_CLEAR.U & !dataInQueue.valid, false.B, dataInQueue.valid)
+    PEA.io.ioArray(row).out.data.ready := dataFlow(row) //& activeDataChannel(row)
   }
   dataInQueue.ready := Cat(PEA.io.ioArray.map(_.in.data.ready)).orR()
 
