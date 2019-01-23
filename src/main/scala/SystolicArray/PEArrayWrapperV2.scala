@@ -221,11 +221,11 @@ class PEArrayWrapperV2(
   // Weight Repeat
   for(col <- 0 until cols) {
     weightInQueueInput(col).valid := Mux(repeat,
-      weightInQueue(col).fire(), io.weightIn(col).valid)
+      weightInQueue(col).fire(), io.weightIn(col).valid & state === WEIGHT_QUEUE_FILL.U)
     weightInQueueInput(col).bits := Mux(repeat,
       weightInQueue(col).bits, io.weightIn(col).bits)
     io.weightIn(col).ready := Mux(repeat,
-      false.B, weightInQueueInput(col).ready
+      false.B, weightInQueueInput(col).ready & state === WEIGHT_QUEUE_FILL.U
     )
   }
   for(row <- 0 until rows) {
