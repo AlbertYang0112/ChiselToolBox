@@ -38,8 +38,6 @@ class PEArrayWrapperV2(
     val strideX = Input(UInt(8.W))
     val strideY = Input(UInt(8.W))
     val flush = Input(Bool())
-    val repeat = Input(Bool())
-    val stall = Input(Bool())
   })
 
   val PEA = Module(new PEArrayV2(
