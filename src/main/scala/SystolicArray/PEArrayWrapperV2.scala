@@ -7,12 +7,11 @@ import chisel3.util.EnqIO
 trait PEAWState {
   val STATE_WIDTH =       3
 
-  val IDLE =              0
-  val WEIGHT_CLEAR =      1
-  val WEIGHT_QUEUE_FILL = 2
-  val WEIGHT_REFRESH =    3
-  val DATA_FLOW =         4
-  val DATA_CLEAR =        5
+  val WEIGHT_CLEAR =      0
+  val WEIGHT_QUEUE_FILL = 1
+  val WEIGHT_REFRESH =    2
+  val DATA_FLOW =         3
+  val DATA_CLEAR =        4
 }
 
 class PEArrayWrapperV2(
@@ -47,7 +46,7 @@ class PEArrayWrapperV2(
     rows = rows, cols = cols,
     dataBits = dataWidth, resultFIFODepth = PEResultFIFODepth))
 
-  val state = RegInit(IDLE.U(STATE_WIDTH.W))
+  val state = RegInit(WEIGHT_CLEAR.U(STATE_WIDTH.W))
 
   val weightInQueueInput = List.fill(cols)(Wire(EnqIO(UInt(dataWidth.W))))
   val dataInQueueInput = Wire(EnqIO(UInt(dataWidth.W)))
@@ -128,19 +127,8 @@ class PEArrayWrapperV2(
   }
   io.weightUpdateReady := state === WEIGHT_QUEUE_FILL.U
 
-  // Todo: Block the weight input in other states except WEIGHT_QUEUE_FILL.
-  when(state === IDLE.U(5.W)) {
-    when(weightRefreshReq) {
-      state := WEIGHT_CLEAR.U
-      flowCounter := 0.U
-      repeat := false.B
-    } .otherwise {
-      repeat := true.B
-    }
-    setAllChannelControl(calculate = false, outputSum = false, clearSum = true)
-    setAllDataFlow(false)
-    setAllWeightFlow(false)
-  } .elsewhen(state === WEIGHT_CLEAR.U) {
+  when(state === WEIGHT_CLEAR.U) {
+    repeat := false.B
     setAllWeightFlow(true)
     when(Cat(weightInQueue.map(_.valid)).orR()) {
       flowCounter := 0.U
@@ -208,7 +196,7 @@ class PEArrayWrapperV2(
         firstFire := true.B
       }
     } .elsewhen(flowCounter === 0.U) {
-      state := IDLE.U
+      state := WEIGHT_CLEAR.U
       setAllDataFlow(false)
       setAllWeightFlow(false)
       setAllChannelControl(calculate = false, outputSum = true, clearSum = true)
