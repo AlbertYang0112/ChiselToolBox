@@ -48,13 +48,13 @@ class PEArrayWrapperV2(
 
   val state = RegInit(WEIGHT_CLEAR.U(STATE_WIDTH.W))
 
-  val weightInQueueInput = List.fill(cols)(Wire(EnqIO(UInt(dataWidth.W))))
+  private val weightInQueueInput = List.fill(cols)(Wire(EnqIO(UInt(dataWidth.W))))
   val dataInQueueInput = Wire(EnqIO(UInt(dataWidth.W)))
   //val resultOutQueueInput = Wire(EnqIO(UInt(dataWidth.W)))
   val dataInQueue = Queue(dataInQueueInput, wrapFIFODepth)
   //val dataChanQueue = List.fill(rows)(Queue(dataInQueue, chanFIFODepth))
-  val weightInQueue = List.tabulate(cols)(col => Queue(weightInQueueInput(col), chanFIFODepth))
-  val resultOutQueue = List.tabulate(rows)(row => Queue(PEA.io.ioArray(row).out.result, wrapFIFODepth))
+  private val weightInQueue = List.tabulate(cols)(col => Queue(weightInQueueInput(col), chanFIFODepth))
+  private val resultOutQueue = List.tabulate(rows)(row => Queue(PEA.io.ioArray(row).out.result, wrapFIFODepth))
   //val resultOutQueue = Queue(resultOutQueueInput, wrapFIFODepth)
   //val resultChanQueue = List.tabulate(rows)(row => Queue(PEA.io.ioArray(row).out.result, chanFIFODepth))
 
@@ -65,25 +65,20 @@ class PEArrayWrapperV2(
     //io.resultOut(row) <> resultOutQueue(row)
   }
 
-  //val weightFlow = List.fill(cols)(RegInit(false.B))
-  //val dataFlow = List.fill(rows)(RegInit(false.B))
-  //val controlOutputSum = List.fill(cols)(RegInit(false.B))
-  //val controlCalculate = List.fill(cols)(RegInit(false.B))
-  //val controlClearSum = List.fill(cols)(RegInit(false.B))
-  val weightFlow = List.fill(cols)(Wire(Bool()))
-  val dataFlow = List.fill(rows)(Wire(Bool()))
-  val controlOutputSum = List.fill(cols)(Wire(Bool()))
-  val controlCalculate = List.fill(cols)(Wire(Bool()))
-  val controlClearSum = List.fill(cols)(Wire(Bool()))
+  private val weightFlow = List.fill(cols)(Wire(Bool()))
+  private val dataFlow = List.fill(rows)(Wire(Bool()))
+  private val controlOutputSum = List.fill(cols)(Wire(Bool()))
+  private val controlCalculate = List.fill(cols)(Wire(Bool()))
+  private val controlClearSum = List.fill(cols)(Wire(Bool()))
   val firstFire = RegInit(false.B)
-  val resultAllReady = Cat(PEA.io.ioArray.map(_.out.result.ready)).andR()
-  val weightAllValid = Cat(PEA.io.ioArray.map(_.in.weight.valid)).andR()
-  val allChannelReady = dataInQueue.valid & weightAllValid & resultAllReady
+  private val resultAllReady = Cat(PEA.io.ioArray.map(_.out.result.ready)).andR()
+  private val weightAllValid = Cat(PEA.io.ioArray.map(_.in.weight.valid)).andR()
+  private val allChannelReady = dataInQueue.valid & weightAllValid & resultAllReady
   val weightFlowEnable = Mux(state === DATA_FLOW.U, allChannelReady, true.B)
   val dataFlowEnable = Mux(state === DATA_FLOW.U, allChannelReady, false.B)
   val weightRefreshPrev = RegNext(io.weightUpdate)
-  val weightRefreshReq = io.weightUpdate & !weightRefreshPrev
-  val weightRefreshDone = !io.weightUpdate & weightRefreshPrev
+  private val weightRefreshReq = io.weightUpdate & !weightRefreshPrev
+  private val weightRefreshDone = !io.weightUpdate & weightRefreshPrev
   val repeat = RegInit(false.B)
 
   val flowCounter = RegInit(0.U(5.W))
