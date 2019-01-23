@@ -25,6 +25,20 @@ object Launcher {
       Driver.execute(() => new PEArrayWrapper(1, 10, 32, 2, 16), manager) {
         c => new PEAWrapperTests(c)
       }
+    },
+    "PEArrayWrapperV2" -> { manager: TesterOptionsManager =>
+      Driver.execute(() => new PEArrayWrapperV2(
+        dataWidth = 8,
+        weightWidth = 8,
+        weightChanNum = 5,
+        rows = 5,
+        cols = 5,
+        PEResultFIFODepth = 16,
+        wrapFIFODepth = 16,
+        chanFIFODepth = 16
+      ), manager) {
+        c => new PEAWrapperV2Tests(c)
+      }
     }
   )
   def main(args: Array[String]): Unit = {

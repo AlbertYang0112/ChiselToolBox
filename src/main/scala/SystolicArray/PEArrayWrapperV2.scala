@@ -16,6 +16,7 @@ trait PEAWState {
 
 class PEArrayWrapperV2(
                         val dataWidth: Int,
+                        val weightWidth: Int,
                         val weightChanNum: Int,
                         val rows: Int,
                         val cols: Int,
@@ -24,11 +25,12 @@ class PEArrayWrapperV2(
                         val chanFIFODepth: Int
                       ) extends Module with PEAWState {
 
+  val resultWidth = dataWidth + weightWidth
   val io = IO(new Bundle{
     // Data
     val dataIn = DeqIO(UInt(dataWidth.W))
-    val weightIn = Vec(weightChanNum, DeqIO(UInt(dataWidth.W)))
-    val resultOut = Vec(rows, EnqIO(UInt(dataWidth.W)))
+    val weightIn = Vec(weightChanNum, DeqIO(UInt(weightWidth.W)))
+    val resultOut = Vec(rows, EnqIO(UInt(resultWidth.W)))
     // Control
     val weightUpdate = Input(Bool())
     val weightUpdateReady = Output(Bool())
@@ -41,14 +43,17 @@ class PEArrayWrapperV2(
   })
 
   val PEA = Module(new PEArrayV2(
-    rows = rows, cols = cols,
-    dataBits = dataWidth, resultFIFODepth = PEResultFIFODepth))
+    rows = rows,
+    cols = cols,
+    dataWidth = dataWidth,
+    weightWidth = weightWidth,
+    resultFIFODepth = PEResultFIFODepth))
 
   val state = RegInit(WEIGHT_CLEAR.U(STATE_WIDTH.W))
 
-  private val weightInQueueInput = List.fill(cols)(Wire(EnqIO(UInt(dataWidth.W))))
+  private val weightInQueueInput = List.fill(cols)(Wire(EnqIO(UInt(weightWidth.W))))
   val dataInQueueInput = Wire(EnqIO(UInt(dataWidth.W)))
-  //val resultOutQueueInput = Wire(EnqIO(UInt(dataWidth.W)))
+  //val resultOutQueueInput = Wire(EnqIO(UInt(resultWidth.W)))
   val dataInQueue = Queue(dataInQueueInput, wrapFIFODepth)
   //val dataChanQueue = List.fill(rows)(Queue(dataInQueue, chanFIFODepth))
   private val weightInQueue = List.tabulate(cols)(col => Queue(weightInQueueInput(col), chanFIFODepth))
@@ -235,9 +240,9 @@ class PEArrayWrapperV2(
 
   // Unused IO
   for(row <- 0 until rows) {
-    //PEA.io.ioArray(row).in.result.enq(0.U(dataWidth.W))
+    //PEA.io.ioArray(row).in.result.enq(0.U(resultWidth.W))
     PEA.io.ioArray(row).in.result.valid := false.B
-    PEA.io.ioArray(row).in.result.bits := 0.U(dataWidth.W)
+    PEA.io.ioArray(row).in.result.bits := 0.U(resultWidth.W)
   }
 
 }

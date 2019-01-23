@@ -10,19 +10,21 @@ class ControlBundle extends Bundle {
 }
 
 class PEBundleOutputV2(
-                        val dataBits: Int
+                        val dataWidth: Int,
+                        val weightWidth: Int
                       ) extends Bundle {
-  val data = EnqIO(UInt(dataBits.W))
-  val weight = EnqIO(UInt(dataBits.W))
-  val result = EnqIO(UInt(dataBits.W))
+  val data = EnqIO(UInt(dataWidth.W))
+  val weight = EnqIO(UInt(weightWidth.W))
+  val result = EnqIO(UInt((dataWidth + weightWidth).W))
   val control = EnqIO(new ControlBundle)
 }
 
 class PEBundleV2(
-                val dataBits: Int
+                val dataWidth: Int,
+                val weightWidth: Int
                 ) extends Bundle {
-  val in = Flipped(new PEBundleOutputV2(dataBits))
-  val out = new PEBundleOutputV2(dataBits)
+  val in = Flipped(new PEBundleOutputV2(dataWidth, weightWidth))
+  val out = new PEBundleOutputV2(dataWidth, weightWidth)
 }
 
 trait ControlBit {
@@ -33,27 +35,29 @@ trait ControlBit {
 }
 
 class PEV3(
-            dataBits: Int,
+            dataWidth: Int,
+            weightWidth: Int,
             resultBufferDepth: Int
           ) extends Module with ControlBit {
-  val io = IO(new PEBundleV2(dataBits))
+  val io = IO(new PEBundleV2(dataWidth, weightWidth))
 
   // Pipeline Buffers
-  val dataBuffer = RegInit(0.U(dataBits.W))
-  val weightBuffer = RegInit(0.U(dataBits.W))
+  val dataBuffer = RegInit(0.U(dataWidth.W))
+  val weightBuffer = RegInit(0.U(weightWidth.W))
+  val resultWidth = dataWidth + weightWidth
   //val resultBuffer = RegNext(0.U(dataBits.W))
   //val controlBuffer = RegInit(0.U(dataBits.W))
 
-  val queueIn = Wire(EnqIO(UInt(dataBits.W)))
-  val queueOut = Wire(DeqIO(UInt(dataBits.W)))
+  val queueIn = Wire(EnqIO(UInt(resultWidth.W)))
+  val queueOut = Wire(DeqIO(UInt(resultWidth.W)))
   val dataValid = RegInit(false.B)
   val weightValid = RegInit(false.B)
   val resultValid = RegInit(false.B)
   //val controlValid = RegInit(false.B)
 
-  val partialSum = RegInit(0.U(dataBits.W))
-  val mulAddResult = Wire(UInt(dataBits.W))
-  val addRhs = Mux(io.in.control.bits.clearSum, 0.U(dataBits.W), partialSum)
+  val partialSum = RegInit(0.U(resultWidth.W))
+  val mulAddResult = Wire(UInt(resultWidth.W))
+  val addRhs = Mux(io.in.control.bits.clearSum, 0.U(resultWidth.W), partialSum)
   val inputValid = io.in.data.valid & io.in.weight.valid & io.in.control.valid
   val outputReady = io.out.data.ready & io.out.weight.ready & io.out.control.ready
   mulAddResult := io.in.data.bits * io.in.weight.bits + addRhs
