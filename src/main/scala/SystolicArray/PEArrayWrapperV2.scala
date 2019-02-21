@@ -133,46 +133,79 @@ class PEArrayWrapperV2(
   }
   io.weightUpdateReady := state === WEIGHT_QUEUE_FILL.U
 
-  when(state === WEIGHT_CLEAR.U) {
+  def dataChannelEnq(cond: Bool): Bool= {
+    //Todo: Add the support for kernels with different X and Y Size
+    // The data stream must stall several cycles per
+    // KERNEL_SIZE_X cycles waiting for the output of the
+    // result when the kernel size doesn't match in X and Y
+    when(cond) {
+      dataFlow.foreach(_ := true.B)
+      weightFlow.foreach(_ := true.B)
+      when(Mux(state === DATA_FLOW.U, anyDataChannelFire, PEA.io.ioArray.head.in.data.ready)) {
+        flowCounter := Mux(flowCounter === kernelSizeX - 1.U, 0.U, flowCounter + 1.U)
+        enableAllControl()
+        setAllControlFlow(true)
+      }.otherwise {
+        flowCounter := flowCounter
+        disableAllControl()
+        setAllControlFlow(false)
+      }
+      for (row <- 0 until rows) {
+        controlCalculate(row) := activeDataChannel(row)
+      }
+      for(row <- 0 until rows) {
+        controlClearSum(row) := rowController.io.activeSpike(row)
+        controlOutputSum(row) := rowController.io.activeSpike(row)
+      }
+    } .otherwise {
+      setAllDataFlow(false)
+      setAllWeightFlow(false)
+      controlCalculate.foreach(_ := false.B)
+      for(row <- 0 until rows) {
+        controlClearSum(row) := rowController.io.activeSpike(row)
+        controlOutputSum(row) := rowController.io.activeSpike(row)
+      }
+      setAllControlFlow(false)
+      disableAllControl()
+    }
+    cond
+  }
+
+  // State Machine Uints
+  def stateWeightClear(): Unit = {
     repeat := false.B
-    setAllWeightFlow(flow = true, force = true)
+    setAllWeightFlow(flow = true)
     when(Cat(weightInQueue.map(_.valid)).orR()) {
       flowCounter := 0.U
     } .otherwise {
       flowCounter := Mux(flowCounter === (cols - 1).U, 0.U, flowCounter + 1.U)
       when(flowCounter === (cols - 1).U) {
+        // Todo: Change the parameter update method
         state := WEIGHT_QUEUE_FILL.U
+        strideX := io.strideX     // Todo: Check the strideX
+        kernelSizeX := io.kernelSizeX // Todo: Check the kernelSizeX
+        kernelSizeY := io.kernelSizeY
       }
     }
 
-    setAllChannelControl(calculate = false, outputSum = false, clearSum = true, force = true)
-    setAllControlFlow(true, force = true)
+    controlCalculate.foreach(_ := false.B)
+    controlClearSum.foreach(_ := false.B)
+    for(row <- 0 until rows) {
+      controlOutputSum(row) := rowController.io.activeSpike(row)
+    }
+    setAllControlFlow(true)
     enableAllControl(force = true)
 
     setAllDataFlow(false)
-  } .elsewhen(state === WEIGHT_QUEUE_FILL.U) {
-    when(weightRefreshDone) {
-      state := WEIGHT_REFRESH.U
-      strideX := io.strideX     // Todo: Check the strideX
-      kernelSizeX := io.kernelSizeX // Todo: Check the kernelSizeX
-      flowCounter := 0.U
-      repeat := true.B
-    } .otherwise {
-      repeat := false.B
-    }
-    setAllChannelControl(calculate = false, outputSum = false, clearSum = true)
-    setAllControlFlow(true)
-    enableAllControl(false)
-    setAllDataFlow(false)
-    setAllWeightFlow(false)
-  } .elsewhen(state === WEIGHT_REFRESH.U) {
+  }
+
+  def stateWeightQueueFill(): Unit = {
     // Refresh the weight in the array
     when(flowCounter === kernelSizeX - 1.U) {
       state := DATA_FLOW.U
       flowCounter := 0.U
-      firstFire := true.B
     } .elsewhen(weightAllValid) {
-      flowCounter := Mux(flowCounter === (cols - 1).U, 0.U, flowCounter + 1.U)
+      flowCounter := Mux(flowCounter === kernelSizeX - 1.U, 0.U, flowCounter + 1.U)
     }
 
     when(weightAllValid) {
@@ -188,48 +221,61 @@ class PEArrayWrapperV2(
       setAllWeightFlow(false)
     }
     setAllDataFlow(false)
-    setAllChannelControl(calculate = true, outputSum = false, clearSum = false)
+    setAllChannelControl(calculate = false, outputSum = false, clearSum = false)
     setAllControlFlow(true)
-    disableAllControl(false)
-  } .elsewhen(state === DATA_FLOW.U) {
+    disableAllControl()
+  }
+
+  def stateDataFlow(): Unit = {
     when(weightRefreshReq) {
       state := DATA_CLEAR.U
+      flowCounter := 0.U
       setAllDataFlow(false)
       setAllWeightFlow(false)
       setAllChannelControl(calculate = false, outputSum = false, clearSum = false)
       setAllControlFlow(false)
-      disableAllControl(false)
-      firstFire := false.B
+      disableAllControl()
     } .otherwise {
       dataChannelEnq(cond = dataInQueue.valid & resultAllReady)
-      when(dataInQueue.valid & resultAllReady & flowCounter === kernelSizeX - 1.U) {
-        firstFire := false.B
-      }
     }
-  } .elsewhen(state === DATA_CLEAR.U) {
-    when(Cat(PEA.io.ioArray.map(_.out.data.valid)).orR() | flowCounter =/= 0.U) {
+  }
+
+  def stateDataClear(): Unit = {
+    when(dataInQueue.valid) {
+      flowCounter := 0.U
+      dataChannelEnq(cond = resultAllReady)
+    } .elsewhen(flowCounter =/= kernelSizeX - 1.U) {
       dataChannelEnq(cond = resultAllReady)
     } .otherwise {
       state := WEIGHT_CLEAR.U
-      setAllDataFlow(false)
-      setAllWeightFlow(false)
-      //setAllChannelControl(calculate = false, outputSum = false, clearSum = true)
-      for(col <- 0 until cols - 1) {
-        controlCalculate(col) := false.B
-        controlOutputSum(col) := false.B
-        controlClearSum(col) := false.B
-        //disableControl(col)
-      }
-      controlCalculate(cols - 1) := false.B
-      controlOutputSum(cols - 1) := true.B & kernelSizeX === cols.U
-      controlClearSum(cols - 1) := false.B
-      //enableControl(cols - 1)
-      setAllControlFlow(true)
-      enableAllControl(false)
+      dataChannelEnq(cond = resultAllReady)
     }
+  }
+
+  when(state === WEIGHT_CLEAR.U) {
+    stateWeightClear()
+  } .elsewhen(state === WEIGHT_QUEUE_FILL.U) {
+    when(weightRefreshDone) {
+      state := WEIGHT_REFRESH.U
+      flowCounter := 0.U
+      repeat := true.B
+    } .otherwise {
+      repeat := false.B
+    }
+    setAllChannelControl(calculate = false, outputSum = false, clearSum = true)
+    setAllControlFlow(true)
+    enableAllControl(false)
+    setAllDataFlow(false)
+    setAllWeightFlow(false)
+  } .elsewhen(state === WEIGHT_REFRESH.U) {
+    stateWeightQueueFill()
+  } .elsewhen(state === DATA_FLOW.U) {
+    stateDataFlow()
+  } .elsewhen(state === DATA_CLEAR.U) {
+    stateDataClear()
   } .otherwise {
     state := DATA_CLEAR.U
-    firstFire := false.B
+    // Todo: Fix the bug in data clear stage
     setAllDataFlow(false)
     setAllWeightFlow(false)
     setAllChannelControl(calculate = false, outputSum = false, clearSum = true)
