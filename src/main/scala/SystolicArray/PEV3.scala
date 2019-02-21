@@ -17,6 +17,7 @@ class PEBundleOutputV2(
   val weight = EnqIO(UInt(weightWidth.W))
   val result = EnqIO(UInt((dataWidth + weightWidth).W))
   val control = EnqIO(new ControlBundle)
+  val colActivate = Output(Bool())
 }
 
 class PEBundleV2(
@@ -64,7 +65,7 @@ class PEV3(
   val inputValid = io.in.data.valid & io.in.weight.valid & io.in.control.valid
   val outputReady = io.out.data.ready & io.out.weight.ready & io.out.control.ready
   mulAddResult := io.in.data.bits * io.in.weight.bits + addRhs
-  when(io.in.control.valid) {
+  when(io.in.control.valid & io.in.data.valid & io.in.colActivate) {
     when(io.in.control.bits.calculate) {
       partialSum := mulAddResult
     } .elsewhen(io.in.control.bits.clearSum) {
@@ -74,11 +75,12 @@ class PEV3(
 //  partialSum := Mux(io.in.control.bits.calculate & io.in.control.valid,
 //    mulAddResult, partialSum)
   queueIn.bits := partialSum
-  //queueIn.valid := io.in.control.bits & inputValid
-  queueIn.valid := io.in.control.bits.outputSum & io.in.control.valid
+  queueIn.valid := io.in.control.bits.outputSum & io.in.control.valid & io.in.colActivate
 
   queueOut <> Queue(queueIn, resultBufferDepth)
   queueOut.ready := io.out.result.ready
+
+  io.out.colActivate := io.in.colActivate
 
   io.out.weight.bits := weightBuffer
   io.out.data.bits := dataBuffer

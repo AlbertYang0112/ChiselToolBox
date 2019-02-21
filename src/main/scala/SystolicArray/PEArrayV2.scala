@@ -24,6 +24,7 @@ class PEArrayV2(
 
     peArray(row)(col).io.in.control <> peArray(row - 1)(col).io.out.control
     peArray(row)(col).io.in.weight <> peArray(row - 1)(col).io.out.weight
+    peArray(row)(col).io.in.colActivate := peArray(row - 1)(col).io.out.colActivate
   }
   for(row <- 0 until rows) {
     peArray(row).head.io.in.data <> io.ioArray(row).in.data
