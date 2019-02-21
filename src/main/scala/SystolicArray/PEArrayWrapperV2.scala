@@ -91,117 +91,36 @@ class PEArrayWrapperV2(
   private val weightRefreshDone = !io.weightUpdate & weightRefreshPrev
   val repeat = RegInit(false.B)
 
-  val flowCounter = RegInit(0.U(5.W))           //  Todo: Parameterize the width
-
-  // Data allocation
-  val dataChanFlowCounter = Mem(cols, UInt(3.W))   // Todo: Parameterize the width
-  val dataChanLastActive = RegInit(0.U(3.W))
-  val activeDataChannel = List.fill(cols)(Wire(Bool()))
-  val dataReallocateCounter = RegInit(0.U(3.W))
-
-  val strideX = RegInit(1.U(3.W))               // Todo: Parameterize the width
-  val kernelSizeX = RegInit((cols - 1).U(3.W))  // Todo: Parameterize the width
-  val controlShift = Mux(flowCounter === 0.U, kernelSizeX - 1.U, flowCounter - 1.U)
-
-  dataInQueueInput.bits := io.dataIn.bits
-  dataInQueueInput.valid := Mux(state === DATA_FLOW.U, io.dataIn.valid, false.B)
-  io.dataIn.ready := Mux(state === DATA_FLOW.U, dataInQueueInput.ready, false.B)
-
-  def dataChannelEnq(cond: Bool) = {
-    when(cond) {
-      dataFlow.foreach(_ := true.B)
-      weightFlow.foreach(_ := true.B)
-      when(Mux(state === DATA_FLOW.U, PEA.io.ioArray.head.in.data.fire(), PEA.io.ioArray.head.in.data.ready)) {
-        flowCounter := Mux(flowCounter === kernelSizeX - 1.U, 0.U, flowCounter + 1.U)
-        enableAllControl(false)
-        setAllControlFlow(true)
-      } .otherwise {
-        flowCounter := flowCounter
-        disableAllControl(false)
-        setAllControlFlow(false)
-      }
-      for(col <- 0 until cols) {
-        controlCalculate(col) := col.U < kernelSizeX
-      }
-      for(col <- 0 until cols) {
-        controlClearSum(col) := Mux(col.U === controlShift & (col.U <= kernelSizeX), true.B, false.B) & (!firstFire | col.U =/= kernelSizeX - 1.U)
-        controlOutputSum(col) := Mux(col.U === controlShift & (col.U <= kernelSizeX), true.B, false.B) & (!firstFire | col.U =/= kernelSizeX - 1.U)
-      }
-      //controlClearSum(cols - 1) := Mux((cols - 1).U === controlShift & cols.U === kernelSizeX, true.B, false.B) & !firstFire
-      //controlOutputSum(cols - 1) := Mux((cols - 1).U === controlShift & cols.U === kernelSizeX, true.B, false.B) & !firstFire
-    } .otherwise {
-      setAllDataFlow(false)
-      setAllWeightFlow(false)
-      setAllChannelControl(calculate = false, outputSum = false, clearSum = false)
-      setAllControlFlow(false)
-      disableAllControl(false)
-    }
-    cond
-  }
-
-  def setAllChannelControl(calculate: Boolean, outputSum: Boolean, clearSum: Boolean, force: Boolean=false) = {
-    if(!force) {
-      for (chan <- 0 until cols) {
-        controlClearSum(chan) := clearSum.B & chan.U < kernelSizeX
-        controlCalculate(chan) := calculate.B & chan.U < kernelSizeX
-        controlOutputSum(chan) := outputSum.B & chan.U < kernelSizeX
-      }
-    } else {
-      for (chan <- 0 until cols) {
-        controlClearSum(chan) := clearSum.B
-        controlCalculate(chan) := calculate.B
-        controlOutputSum(chan) := outputSum.B
-      }
+  def setAllChannelControl(calculate: Boolean, outputSum: Boolean, clearSum: Boolean): Unit = {
+    for (chan <- 0 until cols) {
+      controlClearSum(chan) := clearSum.B
+      controlCalculate(chan) := calculate.B
+      controlOutputSum(chan) := outputSum.B
     }
   }
-  def setAllWeightFlow(flow: Boolean, force: Boolean=false) = {
-    if(!force) {
-      for (chan <- 0 until cols) {
-        weightFlow(chan) := flow.B & chan.U < kernelSizeX
-      }
-    } else {
-      weightFlow.foreach(_ := flow.B)
-    }
+  def setAllWeightFlow(flow: Boolean): Unit = {
+    weightFlow.foreach(_ := flow.B)
   }
-  def setAllDataFlow(flow: Boolean, force: Boolean=false) = {
-    if(!force) {
-      for(chan <- 0 until rows) {
-        dataFlow(chan) := flow.B & chan.U < kernelSizeX
-      }
-    } else {
-      dataFlow.foreach(_ := flow.B)
-    }
+  def setAllDataFlow(flow: Boolean): Unit = {
+    dataFlow.foreach(_ := flow.B)
   }
-  def setAllControlFlow(flow: Boolean, force: Boolean=false) = {
-    if(!force) {
-      for (chan <- 0 until cols) {
-        controlFlow(chan) := flow.B & chan.U < kernelSizeX
-      }
-    } else {
-      controlFlow.foreach(_ := flow.B)
-    }
+  def setAllControlFlow(flow: Boolean): Unit = {
+    controlFlow.foreach(_ := flow.B)
   }
-  def enableControl(chan: Int, force: Boolean = false) = {
-    if(!force)
-      PEA.io.ioArray(chan).in.control.valid := true.B & chan.U < kernelSizeX
-    else
-      PEA.io.ioArray(chan).in.control.valid := true.B
+  def enableControl(chan: Int): Unit = {
+    PEA.io.ioArray(chan).in.control.valid := true.B
   }
-  def disableControl(chan: Int, force: Boolean = false) = {
+  def disableControl(chan: Int): Unit = {
     PEA.io.ioArray(chan).in.control.valid := false.B
   }
-  def enableAllControl(force: Boolean = false) = {
-    //PEA.io.ioArray.foreach(_.in.control.valid := true.B)
-    if(!force) {
-      for (col <- 0 until cols) {
-        PEA.io.ioArray(col).in.control.valid := col.U < kernelSizeX
-      }
-    } else {
-      PEA.io.ioArray.foreach(_.in.control.valid := true.B)
-    }
+  def enableAllControl(force: Boolean = false): Unit = {
+    PEA.io.ioArray.foreach(_.in.control.valid := true.B)
   }
-  def disableAllControl(force: Boolean = false) = {
+  def disableAllControl(): Unit = {
     PEA.io.ioArray.foreach(_.in.control.valid := false.B)
+  }
+  for(chan <- 0 until cols) {
+    PEA.io.ioArray(chan).in.colActivate := activeCol(chan)
   }
   io.weightUpdateReady := state === WEIGHT_QUEUE_FILL.U
 
