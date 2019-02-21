@@ -89,25 +89,26 @@ class PEAWrapperV2Tests(c: PEArrayWrapperV2) extends AdvTester(c) {
     takesteps(20)()
     val resultGet = List.tabulate(5){n => resultOut(n).outputs.toList}
     resultOut.foreach(_.outputs.clear())
-    for(i <- 0 until c.cols ) {
-      println(s"RawChan$i:  " + resultGet(i))
+    for(chan <- expectedResult.indices) {
+      for(i <- expectedResult(chan).indices if i < resultGet(chan).size) {
+        expect(resultGet(chan)(i) == expectedResult(chan)(i),
+          msg = s"\nChannel $chan.$i " +
+            s"Expect " + expectedResult(chan)(i) + " Get " + resultGet(chan)(i))
+        if(resultGet(chan)(i) != expectedResult(chan)(i))
+          pass = false
+      }
     }
-    for(i <- 0 until KERNEL_SIZE_X ) {
-      print(s"ExpectChan$i: ")
-      for(index <- expectedResult(i).indices) {
-        print(expectedResult(i)(index) + "  ")
+    if(!pass) {
+      println("")
+      println(s"In iteration $cycles")
+      println("DATA " + testData)
+      println("WEIGHT" + testWeight)
+      println(s"Kernel Size: ($KERNEL_SIZE_X, $KERNEL_SIZE_Y)")
+      println(s"Stride: ($STRIDE_X, $STRIDE_Y)")
+      for(chan <- 0 until KERNEL_SIZE_Y) {
+        println(s"ExpectChan$chan " + expectedResult(chan))
+        println(s"ResultGet$chan  " + resultGet(chan))
       }
-      print("\n")
-      print(s"ResultChan$i: ")
-      for(j <- 0 until resultGet.map(_.size).max if j % KERNEL_SIZE_X == i) {
-        for(chan <- 0 until KERNEL_SIZE_X) {
-          if(j >= resultGet(chan).size)
-            print("A  ")
-          else
-            print(resultGet(chan)(j) + "  ")
-        }
-      }
-      print("\n")
     }
   }
   takesteps(100)()
