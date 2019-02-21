@@ -38,7 +38,8 @@ trait ControlBit {
 class PEV3(
             dataWidth: Int,
             weightWidth: Int,
-            resultBufferDepth: Int
+            resultBufferDepth: Int,
+            bufferedControl: Boolean
           ) extends Module with ControlBit {
   val io = IO(new PEBundleV2(dataWidth, weightWidth))
 
@@ -68,12 +69,10 @@ class PEV3(
   when(io.in.control.valid & io.in.data.valid & io.in.colActivate) {
     when(io.in.control.bits.calculate) {
       partialSum := mulAddResult
-    } .elsewhen(io.in.control.bits.clearSum) {
-      partialSum := 0.U
     }
+  } .elsewhen(io.in.control.bits.clearSum & io.in.control.valid) {
+    partialSum := 0.U
   }
-//  partialSum := Mux(io.in.control.bits.calculate & io.in.control.valid,
-//    mulAddResult, partialSum)
   queueIn.bits := partialSum
   queueIn.valid := io.in.control.bits.outputSum & io.in.control.valid & io.in.colActivate
 
@@ -85,22 +84,15 @@ class PEV3(
   io.out.weight.bits := weightBuffer
   io.out.data.bits := dataBuffer
   io.out.result.bits := Mux(queueOut.valid, queueOut.bits, io.in.result.bits)
-  //io.out.control.bits := controlBuffer
-  //io.out.control.bits := io.in.control.bits
-  io.out.control.bits.clearSum := controlClearSumBuffer
-  io.out.control.bits.calculate := controlCalculateBuffer
-  io.out.control.bits.outputSum := controlOutputSumBuffer
 
   io.out.data.valid := dataValid
   io.out.weight.valid := weightValid
-  //io.out.control.valid := controlValid
   io.out.control.valid := io.in.control.valid
   io.out.result.valid := queueOut.valid | io.in.result.valid
 
   io.in.weight.ready := io.out.weight.ready
   io.in.data.ready := io.out.data.ready
   io.in.result.ready := !queueOut.valid
-  //io.in.control.ready := io.out.control.fire() | !controlValid
   io.in.control.ready := io.out.control.ready
 
   when(io.out.data.ready) {
@@ -113,12 +105,19 @@ class PEV3(
     weightBuffer := io.in.weight.bits
   }
 
-  when(io.out.control.ready) {
-    //controlValid := io.in.control.valid
-    //controlBuffer := io.in.control.bits
-    controlCalculateBuffer := io.in.control.bits.calculate
-    controlOutputSumBuffer := io.in.control.bits.outputSum
-    controlClearSumBuffer := io.in.control.bits.clearSum
+  if(bufferedControl) {
+    when(io.out.control.ready) {
+      controlCalculateBuffer := io.in.control.bits.calculate
+      controlOutputSumBuffer := io.in.control.bits.outputSum
+      controlClearSumBuffer := io.in.control.bits.clearSum
+    }
+    io.out.control.bits.clearSum := controlClearSumBuffer
+    io.out.control.bits.calculate := controlCalculateBuffer
+    io.out.control.bits.outputSum := controlOutputSumBuffer
+  } else {
+    io.out.control.bits.clearSum := io.in.control.bits.clearSum
+    io.out.control.bits.calculate := io.in.control.bits.calculate
+    io.out.control.bits.outputSum := io.in.control.bits.outputSum
   }
 
   when(queueOut.valid | io.in.result.valid) {
