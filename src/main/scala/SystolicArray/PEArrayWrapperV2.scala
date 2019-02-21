@@ -50,6 +50,8 @@ class PEArrayWrapperV2(
     dataWidth = dataWidth,
     weightWidth = weightWidth,
     resultFIFODepth = PEResultFIFODepth))
+  val rowController = Module(new PEARowController(rows = rows, spikeAt = -1))
+  val colController = Module(new PEAColController(cols = cols))
 
   val state = RegInit(WEIGHT_CLEAR.U(STATE_WIDTH.W))
 
@@ -335,33 +337,21 @@ class PEArrayWrapperV2(
   }
   dataInQueue.ready := Cat(PEA.io.ioArray.map(_.in.data.ready)).orR()
 
-  // Data allocation
-  // Global re-allocation counter
-  when(state === WEIGHT_REFRESH.U) {
-    for(row <- 0 until rows) {
-      dataChanFlowCounter(row) := kernelSizeX
-    }
+  rowController.io.kernelSize := kernelSizeX
+  rowController.io.stride := strideX
+  rowController.io.flow := anyDataFlow
+  rowController.io.outputEnable := state === DATA_FLOW.U | state === DATA_CLEAR.U | state === WEIGHT_CLEAR.U
+  rowController.io.presetRequest := state === WEIGHT_QUEUE_FILL.U
+  rowController.io.clear := state === WEIGHT_CLEAR.U
+  for(chan <- 0 until rows) {
+    activeDataChannel(chan) := rowController.io.active(chan)
   }
-  when(state === WEIGHT_REFRESH.U | state === DATA_FLOW.U | state === DATA_CLEAR.U) {
-    when(anyDataChannelFire | anyWeightChannelFire) {
-      dataReallocateCounter := Mux(dataReallocateCounter === strideX - 1.U, 0.U, dataReallocateCounter + 1.U)
-      when(dataReallocateCounter === 0.U) {
-        // Reallocate
-        dataChanFlowCounter(dataChanLastActive) := 0.U
-        dataChanLastActive := dataChanLastActive + strideX -
-          Mux(dataChanLastActive +  strideX >= kernelSizeX, kernelSizeX, 0.U)
-      }
-    }
-    for(row <- 0 until rows) {
-      when(PEA.io.ioArray(row).in.data.fire() & dataChanFlowCounter(row) =/= kernelSizeX) {
-        dataChanFlowCounter(row) := dataChanFlowCounter(row) + 1.U
-      }
-    }
+  colController.io.kernelSize := kernelSizeY
+  colController.io.stride := strideY
+  colController.io.outputEnable := anyDataFlow | state === WEIGHT_CLEAR.U
+  for(col <- 0 until cols) {
+    activeCol(col) := colController.io.active(col)
   }
-  for(row <- 0 until rows) {
-    activeDataChannel(row) := dataChanFlowCounter(row) =/= kernelSizeX
-  }
-  io.activeChan := Cat(activeDataChannel)
 
   // Unused IO
   for(row <- 0 until rows) {
@@ -369,5 +359,127 @@ class PEArrayWrapperV2(
     PEA.io.ioArray(row).in.result.valid := false.B
     PEA.io.ioArray(row).in.result.bits := 0.U(resultWidth.W)
   }
+}
 
+class PEARowController(
+                    val rows: Int,
+                    val spikeAt: Int
+                    ) extends Module {
+  val io = IO(new Bundle {
+    val outputEnable = Input(Bool())
+    val kernelSize = Input(UInt(3.W))
+    val stride = Input(UInt(3.W))
+    val flow = Input(Bool())
+
+    val presetRequest = Input(Bool())
+    val presetDone = Output(Bool())
+
+    val clear = Input(Bool())
+
+    val active = Vec(rows, Output(Bool()))
+    val activeSpike = Vec(rows, Output(Bool()))
+  })
+  val rowFlowCounter:List[UInt] = List.fill(rows)(RegInit(1.U(3.W)))
+  val nextActiveChannel = RegInit(0.U(3.W))
+  val reallocateCounter = RegInit(0.U(3.W))
+
+  /* Controller Presetting Logic */
+  val presetRequestPrev = RegNext(io.presetRequest)
+  val presetting = RegInit(false.B)
+  val presetCounter = RegInit(0.U(3.W))
+  private def preset(): UInt = {
+    when(presetCounter < io.kernelSize) {
+      /* Update the flow counter */
+      for(chan <- 0 until rows) {
+        when(nextActiveChannel === chan.U) {
+          rowFlowCounter(chan) := 0.U
+        } .elsewhen(rowFlowCounter(chan) =/= io.kernelSize) {
+          rowFlowCounter(chan) := rowFlowCounter(chan) + 1.U
+        }
+      }
+      reallocateCounter := Mux(reallocateCounter === io.stride - 1.U, 0.U, reallocateCounter + 1.U)
+      nextActiveChannel := nextActiveChannel + io.stride -
+        Mux(nextActiveChannel + io.stride >= io.kernelSize, io.kernelSize, 0.U)
+    }
+    presetCounter := presetCounter + 1.U
+    presetCounter
+  }
+
+  private def step() = {
+    for(chan <- 0 until rows) {
+      when(reallocateCounter === io.stride - 1.U & nextActiveChannel === chan.U) {
+        /* Refresh the flow counter and re-active the channel */
+        rowFlowCounter(chan) := 0.U
+      } .elsewhen(rowFlowCounter(chan) =/= io.kernelSize) {
+        rowFlowCounter(chan) := rowFlowCounter(chan) + 1.U
+      }
+    }
+    /* Update the reallocate counter and the channel to be actived */
+    when(reallocateCounter === io.stride - 1.U) {
+      reallocateCounter := 0.U
+      nextActiveChannel := nextActiveChannel + io.stride -
+        Mux(nextActiveChannel + io.stride >= io.kernelSize, io.kernelSize, 0.U)
+    } .otherwise {
+      reallocateCounter := reallocateCounter + 1.U
+    }
+  }
+
+  io.presetDone := !presetting
+  when(io.presetRequest & !presetRequestPrev) {
+    presetting := true.B
+    presetCounter := 0.U
+    nextActiveChannel := 0.U
+    reallocateCounter := 0.U
+    rowFlowCounter.head := 0.U
+    for (chan <- 1 until rows) {
+      rowFlowCounter(chan) := io.kernelSize
+    }
+  }
+  when(presetting) {
+    when(rowFlowCounter.head =/= io.kernelSize - 1.U) {
+      step()
+    } .otherwise {
+      presetting := false.B
+    }
+  }
+
+  /* Run */
+  when(!presetting & io.flow) {
+    step()
+  }
+  for(chan <- 0 until rows) {
+    io.active(chan) := (rowFlowCounter(chan) =/= io.kernelSize) & !presetting & io.outputEnable
+  }
+
+  /* Active Spike Generator */
+  val activeSpike = List.fill(rows)(RegInit(false.B))
+  //val activeSpike = List.fill(rows)(Wire(Bool()))
+  for(chan <- 0 until rows) {
+    when(!presetting) {
+      when(io.flow & rowFlowCounter(chan) === (if(spikeAt >= 0) spikeAt.U else io.kernelSize - (-spikeAt).U)) {
+        activeSpike(chan) := true.B
+      } .elsewhen(io.flow | io.clear) {
+        activeSpike(chan) := false.B
+      }
+    } .otherwise {
+      activeSpike(chan) := false.B
+    }
+    io.activeSpike(chan) := activeSpike(chan) & io.outputEnable
+  }
+}
+
+class PEAColController(
+                      val cols: Int
+                      ) extends Module {
+  val io = IO(new Bundle{
+    val kernelSize = Input(UInt(3.W))
+    val stride = Input(UInt(3.W))
+    val outputEnable = Input(Bool())
+
+    val active = Vec(cols, Output(Bool()))
+  })
+
+  for(col <- 0 until cols) {
+    io.active(col) := col.U < io.kernelSize & io.outputEnable
+  }
 }
