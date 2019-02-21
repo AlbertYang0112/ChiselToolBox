@@ -55,35 +55,46 @@ class PEArrayWrapperV2(
   val rowController = Module(new PEARowController(rows = rows, spikeAt = -1))
   val colController = Module(new PEAColController(cols = cols))
 
-  val state = RegInit(WEIGHT_CLEAR.U(STATE_WIDTH.W))
-
+  // IO Buffer
   private val weightInQueueInput = List.fill(cols)(Wire(EnqIO(UInt(weightWidth.W))))
   val dataInQueueInput = Wire(EnqIO(UInt(dataWidth.W)))
   val dataInQueue = Queue(dataInQueueInput, wrapFIFODepth)
   private val weightInQueue = List.tabulate(cols)(col => Queue(weightInQueueInput(col), chanFIFODepth))
   private val resultOutQueue = List.tabulate(rows)(row => Queue(PEA.io.ioArray(row).out.result, wrapFIFODepth))
 
-  for(row <- 0 until rows) {
-    io.resultOut(row).bits := resultOutQueue(row).bits
-    io.resultOut(row).valid := resultOutQueue(row).valid
-    resultOutQueue(row).ready := io.resultOut(row).ready
-    //io.resultOut(row) <> resultOutQueue(row)
-  }
+  // States
+  val flowCounter = RegInit(0.U(5.W))           //  Todo: Parameterize the width
+  val resultOutCounter = RegInit(0.U(3.W))
+  val state: UInt = RegInit(WEIGHT_CLEAR.U(STATE_WIDTH.W))
 
+  // State Indicator
+  private val resultAllReady = Cat(PEA.io.ioArray.map(_.out.result.ready)).andR()
+  private val weightAllValid = Cat(PEA.io.ioArray.map(_.in.weight.valid)).andR()
+  private val allChannelReady = dataInQueue.valid & weightAllValid & resultAllReady
+  private val anyDataChannelFire = Cat(PEA.io.ioArray.map(_.in.data.fire())).orR()
+  private val anyWeightChannelFire = Cat(PEA.io.ioArray.map(_.in.weight.fire())).orR()
+
+  // PEA Controlling Signal
   private val weightFlow = List.fill(cols)(Wire(Bool()))
   private val dataFlow = List.fill(rows)(Wire(Bool()))
   private val controlFlow = List.fill(rows)(Wire(Bool()))
   private val controlOutputSum = List.fill(cols)(Wire(Bool()))
   private val controlCalculate = List.fill(cols)(Wire(Bool()))
   private val controlClearSum = List.fill(cols)(Wire(Bool()))
-  val firstFire = RegInit(false.B)
-  private val resultAllReady = Cat(PEA.io.ioArray.map(_.out.result.ready)).andR()
-  private val weightAllValid = Cat(PEA.io.ioArray.map(_.in.weight.valid)).andR()
-  private val allChannelReady = dataInQueue.valid & weightAllValid & resultAllReady
-  private val anyDataChannelFire = Cat(PEA.io.ioArray.map(_.in.data.fire())).orR()
-  private val anyWeightChannelFire = Cat(PEA.io.ioArray.map(_.in.weight.fire())).orR()
   val weightFlowEnable = Mux(state === DATA_FLOW.U, allChannelReady, true.B)
   val dataFlowEnable = Mux(state === DATA_FLOW.U, allChannelReady, false.B)
+  val activeDataChannel = List.fill(cols)(Wire(Bool()))
+  val activeCol = List.fill(cols)(Wire(Bool()))
+
+  private val anyDataFlow = Cat(dataFlow).orR()
+
+  // Parameters
+  val strideX = RegInit(1.U(3.W))               // Todo: Parameterize the width
+  val strideY = RegInit(1.U(3.W))
+  val kernelSizeX = RegInit((rows - 1).U(3.W))  // Todo: Parameterize the width
+  val kernelSizeY = RegInit((cols - 1).U(3.W))
+
+
   val weightRefreshPrev = RegNext(io.weightUpdate)
   private val weightRefreshReq = io.weightUpdate & !weightRefreshPrev
   private val weightRefreshDone = !io.weightUpdate & weightRefreshPrev
