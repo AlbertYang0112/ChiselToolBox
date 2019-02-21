@@ -22,17 +22,25 @@ class PEAWrapperV2Tests(c: PEArrayWrapperV2) extends AdvTester(c) {
     val testData = List.tabulate(DATA_SIZE)(n => Random.nextInt(50))
     //val testWeight = List.tabulate(KERNEL_SIZE_Y)(y => List.tabulate(KERNEL_SIZE_X)(x => x % KERNEL_SIZE_X + 1))
     val testWeight = List.tabulate(KERNEL_SIZE_Y)(y => List.tabulate(KERNEL_SIZE_X)(x => Random.nextInt(10)))
+    // val testWeight = List.tabulate(KERNEL_SIZE_Y)(y => List.tabulate(KERNEL_SIZE_X)(x => 1))
+    val resultSize = (KERNEL_SIZE_X + DATA_SIZE - 1) / STRIDE_X + (
+      if((KERNEL_SIZE_X + DATA_SIZE - 1) % STRIDE_X != 0)
+        1
+      else
+        0
+      )
     val expectedResult = List.tabulate(KERNEL_SIZE_Y){y =>
-      List.tabulate(KERNEL_SIZE_X + DATA_SIZE - 1){
+      List.tabulate(resultSize){
         x => {
+          val pos = x * STRIDE_X
           var sum = 0
-          if(x < KERNEL_SIZE_X - 1) {
-            for(i <- 0 to x) {
-              sum += testData(i) * testWeight(y)(KERNEL_SIZE_X - 1 - x + i)
+          if (pos < KERNEL_SIZE_X - 1) {
+            for (i <- 0 to pos) {
+              sum += testData(i) * testWeight(y)(KERNEL_SIZE_X - 1 - pos + i)
             }
           } else {
-            for(i <- 0 until KERNEL_SIZE_X if x + i - KERNEL_SIZE_X + 1 < testData.size)
-              sum += testData(x + i - KERNEL_SIZE_X + 1) * testWeight(y)(i)
+            for (i <- 0 until KERNEL_SIZE_X if pos + i - KERNEL_SIZE_X + 1 < testData.size)
+              sum += testData(pos + i - KERNEL_SIZE_X + 1) * testWeight(y)(i)
           }
           sum
         }
