@@ -9,20 +9,31 @@ class PEAWrapperV2Tests(c: PEArrayWrapperV2) extends AdvTester(c) {
   val weightIn = c.io.weightIn.map{peBundle => DecoupledSource(peBundle)}
   val resultOut = c.io.resultOut.map{peBundle => IrrevocableSink(peBundle)}
 
-  val TEST_CYCLES = 2
-  val KERNEL_SIZE_X = 4
-  val KERNEL_SIZE_Y = 5
-  val STRIDE_X = 1
-  val STRIDE_Y = 1
-  val DATA_SIZE = 40
+  val TEST_CYCLES = 1000
   resultOut.foreach(_.outputs.clear())
 
-  for(cycles <- 0 until TEST_CYCLES) {
-    //val testData = List.tabulate(DATA_SIZE)(n => n % KERNEL_SIZE_X + 1)
+  var KERNEL_SIZE_X = 5
+  var KERNEL_SIZE_Y = 5
+  var STRIDE_X = 2
+  var STRIDE_Y = 2
+  var KERNEL_SIZE_X_UPDATE = 5
+  var KERNEL_SIZE_Y_UPDATE = 5
+  var STRIDE_X_UPDATE = 2
+  var STRIDE_Y_UPDATE = 2
+  var pass = true
+  reg_poke(c.io.weightUpdate, 1)
+  reg_poke(c.io.strideX, STRIDE_X)
+  reg_poke(c.io.strideY, STRIDE_Y)
+  reg_poke(c.io.kernelSizeX, KERNEL_SIZE_X)
+  reg_poke(c.io.kernelSizeY, KERNEL_SIZE_Y)
+  for(cycles <- 0 until TEST_CYCLES if pass) {
+    KERNEL_SIZE_X = KERNEL_SIZE_X_UPDATE
+    KERNEL_SIZE_Y = KERNEL_SIZE_Y_UPDATE
+    STRIDE_X = STRIDE_X_UPDATE
+    STRIDE_Y = STRIDE_Y_UPDATE
+    val DATA_SIZE = Random.nextInt(100) + KERNEL_SIZE_X + 1
     val testData = List.tabulate(DATA_SIZE)(n => Random.nextInt(50))
-    //val testWeight = List.tabulate(KERNEL_SIZE_Y)(y => List.tabulate(KERNEL_SIZE_X)(x => x % KERNEL_SIZE_X + 1))
     val testWeight = List.tabulate(KERNEL_SIZE_Y)(y => List.tabulate(KERNEL_SIZE_X)(x => Random.nextInt(10)))
-    // val testWeight = List.tabulate(KERNEL_SIZE_Y)(y => List.tabulate(KERNEL_SIZE_X)(x => 1))
     val resultSize = (KERNEL_SIZE_X + DATA_SIZE - 1) / STRIDE_X + (
       if((KERNEL_SIZE_X + DATA_SIZE - 1) % STRIDE_X != 0)
         1
@@ -47,19 +58,17 @@ class PEAWrapperV2Tests(c: PEArrayWrapperV2) extends AdvTester(c) {
       }
     }
     resultOut.foreach(_.outputs.clear())
-    reg_poke(c.io.weightUpdate, 1)
-    reg_poke(c.io.strideX, STRIDE_X)
-    reg_poke(c.io.strideY, STRIDE_Y)
-    reg_poke(c.io.kernelSizeX, KERNEL_SIZE_X)
-    reg_poke(c.io.kernelSizeY, KERNEL_SIZE_Y)
-    takesteps(2)()
     while(peek(c.io.weightUpdateReady) != 1) {
       takestep()
     }
     for(i <- 0 until KERNEL_SIZE_X) {
-      for(chan <- weightIn.indices) {
-        //weightIn(chan).inputs.enqueue(i * (chan + 1))
-        weightIn(chan).inputs.enqueue(testWeight(chan)(i))
+      for(chan <- 0 until c.cols) {
+        weightIn(chan).inputs.enqueue(
+          if(chan < KERNEL_SIZE_Y)
+            testWeight(chan)(i)
+          else
+            0
+        )
         takestep()
       }
     }
@@ -71,23 +80,17 @@ class PEAWrapperV2Tests(c: PEArrayWrapperV2) extends AdvTester(c) {
       dataIn.inputs.enqueue(testData(i))
       takesteps(2)()
     }
-    //for(j <- 0 until 3) {
-    //  for(i <- 1 to 5) {
-    //    dataIn.inputs.enqueue(i)
-    //    takesteps(2)()
-    //  }
-    //}
-    //for(i <- 1 to 3) {
-    //  dataIn.inputs.enqueue(i)
-    //  takestep()
-    //}
-    takesteps(2)()
+    KERNEL_SIZE_X_UPDATE = Random.nextInt(5) + 1
+    KERNEL_SIZE_Y_UPDATE = KERNEL_SIZE_X_UPDATE
+    //STRIDE_X_UPDATE = Random.nextInt(KERNEL_SIZE_X_UPDATE) + 1
+    //STRIDE_Y_UPDATE = 1
     reg_poke(c.io.weightUpdate, 1)
-    takestep()
-    reg_poke(c.io.weightUpdate, 0)
-    takestep()
+    reg_poke(c.io.strideX, STRIDE_X_UPDATE)
+    reg_poke(c.io.strideY, STRIDE_Y_UPDATE)
+    reg_poke(c.io.kernelSizeX, KERNEL_SIZE_X_UPDATE)
+    reg_poke(c.io.kernelSizeY, KERNEL_SIZE_Y_UPDATE)
     takesteps(20)()
-    val resultGet = List.tabulate(5){n => resultOut(n).outputs.toList}
+    val resultGet = List.tabulate(resultOut.size){n => resultOut(n).outputs.toList}
     resultOut.foreach(_.outputs.clear())
     for(chan <- expectedResult.indices) {
       for(i <- expectedResult(chan).indices if i < resultGet(chan).size) {
