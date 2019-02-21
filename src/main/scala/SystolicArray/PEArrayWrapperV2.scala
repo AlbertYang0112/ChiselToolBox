@@ -15,6 +15,8 @@ trait PEAWState {
 }
 
 // Todo: Add padding control(the module now is with padding).
+// Todo: Modularization
+// Todo: Add the type annotation
 
 class PEArrayWrapperV2(
                         val dataWidth: Int,
@@ -27,7 +29,7 @@ class PEArrayWrapperV2(
                         val chanFIFODepth: Int
                       ) extends Module with PEAWState {
 
-  val resultWidth = dataWidth + weightWidth
+  val resultWidth: Int = dataWidth + weightWidth
   val io = IO(new Bundle{
     // Data
     val dataIn = DeqIO(UInt(dataWidth.W))
@@ -41,9 +43,9 @@ class PEArrayWrapperV2(
     val strideX = Input(UInt(8.W))
     val strideY = Input(UInt(8.W))
     val flush = Input(Bool())
-    val activeChan = Output(UInt(rows.W))
   })
 
+  // Components
   val PEA = Module(new PEArrayV2(
     rows = rows,
     cols = cols,
@@ -57,13 +59,9 @@ class PEArrayWrapperV2(
 
   private val weightInQueueInput = List.fill(cols)(Wire(EnqIO(UInt(weightWidth.W))))
   val dataInQueueInput = Wire(EnqIO(UInt(dataWidth.W)))
-  //val resultOutQueueInput = Wire(EnqIO(UInt(resultWidth.W)))
   val dataInQueue = Queue(dataInQueueInput, wrapFIFODepth)
-  //val dataChanQueue = List.fill(rows)(Queue(dataInQueue, chanFIFODepth))
   private val weightInQueue = List.tabulate(cols)(col => Queue(weightInQueueInput(col), chanFIFODepth))
   private val resultOutQueue = List.tabulate(rows)(row => Queue(PEA.io.ioArray(row).out.result, wrapFIFODepth))
-  //val resultOutQueue = Queue(resultOutQueueInput, wrapFIFODepth)
-  //val resultChanQueue = List.tabulate(rows)(row => Queue(PEA.io.ioArray(row).out.result, chanFIFODepth))
 
   for(row <- 0 until rows) {
     io.resultOut(row).bits := resultOutQueue(row).bits
@@ -232,6 +230,10 @@ class PEArrayWrapperV2(
   for(col <- 0 until cols) {
     PEA.io.ioArray(col).in.weight <> weightInQueue(col)
     PEA.io.ioArray(col).out.weight.ready := weightFlow(col) & weightFlowEnable
+  }
+
+  // Control Signal <- PEA Control Signals
+  for(col <- 0 until cols) {
     PEA.io.ioArray(col).in.control.bits.outputSum := controlOutputSum(col)
     PEA.io.ioArray(col).in.control.bits.calculate := controlCalculate(col)
     PEA.io.ioArray(col).in.control.bits.clearSum := controlClearSum(col)
@@ -240,6 +242,7 @@ class PEArrayWrapperV2(
   }
 
   // Weight Repeat
+  // Weight Buffer <- IO
   for(col <- 0 until cols) {
     weightInQueueInput(col).valid := Mux(repeat,
       weightInQueue(col).fire(), io.weightIn(col).valid & state === WEIGHT_QUEUE_FILL.U)
@@ -249,12 +252,6 @@ class PEArrayWrapperV2(
       false.B, weightInQueueInput(col).ready & state === WEIGHT_QUEUE_FILL.U
     )
   }
-  for(row <- 0 until rows) {
-    PEA.io.ioArray(row).in.data.bits := Mux(state === DATA_CLEAR.U & !dataInQueue.valid, 0.U(dataWidth.W), dataInQueue.bits)
-    PEA.io.ioArray(row).in.data.valid := Mux(state === DATA_CLEAR.U & !dataInQueue.valid, false.B, dataInQueue.valid)
-    PEA.io.ioArray(row).out.data.ready := dataFlow(row) //& activeDataChannel(row)
-  }
-  dataInQueue.ready := Cat(PEA.io.ioArray.map(_.in.data.ready)).orR()
 
   rowController.io.kernelSize := kernelSizeX
   rowController.io.stride := strideX
