@@ -280,10 +280,38 @@ class PEArrayWrapperV2(
     setAllWeightFlow(false)
     setAllChannelControl(calculate = false, outputSum = false, clearSum = true)
     setAllControlFlow(true)
-    disableAllControl(false)
+    disableAllControl()
   }
 
-  // Link the weight channel
+  // IO <- Result Buffer
+  for(row <- 0 until rows) {
+    io.resultOut(row).bits := resultOutQueue(row).bits
+    io.resultOut(row).valid := resultOutQueue(row).valid
+    resultOutQueue(row).ready := io.resultOut(row).ready
+    //io.resultOut(row) <> resultOutQueue(row)
+  }
+
+  // Data Buffer <- IO
+  dataInQueueInput.bits := io.dataIn.bits
+  dataInQueueInput.valid := Mux(state === DATA_FLOW.U, io.dataIn.valid, false.B)
+  io.dataIn.ready := Mux(state === DATA_FLOW.U, dataInQueueInput.ready, false.B)
+
+  // Data Channel <- Data Buffer
+  for(row <- 0 until rows) {
+    PEA.io.ioArray(row).in.data.bits := Mux(
+      state === DATA_CLEAR.U & !dataInQueue.valid,
+      0.U(dataWidth.W),
+      dataInQueue.bits)
+    PEA.io.ioArray(row).in.data.valid := Mux(
+      state === DATA_CLEAR.U & !dataInQueue.valid,
+      false.B,
+      dataInQueue.valid
+    ) & activeDataChannel(row)
+    PEA.io.ioArray(row).out.data.ready := dataFlow(row) //& activeDataChannel(row)
+  }
+  dataInQueue.ready := Cat(PEA.io.ioArray.map(_.in.data.ready)).orR()
+
+  // Weight Channel <- Weight Buffer
   for(col <- 0 until cols) {
     PEA.io.ioArray(col).in.weight <> weightInQueue(col)
     PEA.io.ioArray(col).out.weight.ready := weightFlow(col) & weightFlowEnable
