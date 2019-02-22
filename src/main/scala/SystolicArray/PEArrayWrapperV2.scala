@@ -141,14 +141,12 @@ class PEArrayWrapperV2(
     when(cond) {
       dataFlow.foreach(_ := true.B)
       weightFlow.foreach(_ := true.B)
+      enableAllControl()
+      setAllControlFlow(true)
       when(Mux(state === DATA_FLOW.U, anyDataChannelFire, PEA.io.ioArray.head.in.data.ready)) {
         flowCounter := Mux(flowCounter === kernelSizeX - 1.U, 0.U, flowCounter + 1.U)
-        enableAllControl()
-        setAllControlFlow(true)
       }.otherwise {
         flowCounter := flowCounter
-        disableAllControl()
-        setAllControlFlow(false)
       }
       for (row <- 0 until rows) {
         controlCalculate(row) := activeDataChannel(row)
@@ -406,6 +404,8 @@ class PEARowController(
     presetCounter
   }
 
+  val nextActiveChannelStep = RegInit(0.U(3.W))
+
   private def step() = {
     for(chan <- 0 until rows) {
       when(reallocateCounter === io.stride - 1.U & nextActiveChannel === chan.U) {
@@ -418,8 +418,8 @@ class PEARowController(
     /* Update the reallocate counter and the channel to be actived */
     when(reallocateCounter === io.stride - 1.U) {
       reallocateCounter := 0.U
-      nextActiveChannel := nextActiveChannel + io.stride -
-        Mux(nextActiveChannel + io.stride >= io.kernelSize, io.kernelSize, 0.U)
+      nextActiveChannel := nextActiveChannel + nextActiveChannelStep -
+        Mux(nextActiveChannel + nextActiveChannelStep >= io.kernelSize, io.kernelSize, 0.U)
     } .otherwise {
       reallocateCounter := reallocateCounter + 1.U
     }
@@ -430,8 +430,9 @@ class PEARowController(
     presetting := true.B
     presetCounter := 0.U
     nextActiveChannel := 0.U
-    reallocateCounter := 0.U
+    reallocateCounter := io.stride - 1.U
     rowFlowCounter.head := 0.U
+    nextActiveChannelStep := io.stride
     for (chan <- 1 until rows) {
       rowFlowCounter(chan) := io.kernelSize
     }
@@ -439,8 +440,13 @@ class PEARowController(
   when(presetting) {
     when(rowFlowCounter.head =/= io.kernelSize - 1.U) {
       step()
-    } .otherwise {
+    }
+    when(nextActiveChannelStep > io.kernelSize) {
+      nextActiveChannelStep := nextActiveChannelStep - io.kernelSize
+    }
+    when(rowFlowCounter.head === io.kernelSize - 1.U & nextActiveChannelStep <= io.kernelSize) {
       presetting := false.B
+      reallocateCounter := rowFlowCounter.head
     }
   }
 

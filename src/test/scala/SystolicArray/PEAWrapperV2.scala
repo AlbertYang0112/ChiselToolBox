@@ -9,17 +9,17 @@ class PEAWrapperV2Tests(c: PEArrayWrapperV2) extends AdvTester(c) {
   val weightIn = c.io.weightIn.map{peBundle => DecoupledSource(peBundle)}
   val resultOut = c.io.resultOut.map{peBundle => IrrevocableSink(peBundle)}
 
-  val TEST_CYCLES = 1000
+  val TEST_CYCLES = 2
   resultOut.foreach(_.outputs.clear())
 
-  var KERNEL_SIZE_X = 5
-  var KERNEL_SIZE_Y = 5
-  var STRIDE_X = 2
-  var STRIDE_Y = 2
-  var KERNEL_SIZE_X_UPDATE = 5
-  var KERNEL_SIZE_Y_UPDATE = 5
-  var STRIDE_X_UPDATE = 2
-  var STRIDE_Y_UPDATE = 2
+  var KERNEL_SIZE_X = 1
+  var KERNEL_SIZE_Y = 1
+  var STRIDE_X = 5
+  var STRIDE_Y = 5
+  var KERNEL_SIZE_X_UPDATE = KERNEL_SIZE_X
+  var KERNEL_SIZE_Y_UPDATE = KERNEL_SIZE_X
+  var STRIDE_X_UPDATE = 5
+  var STRIDE_Y_UPDATE = 5
   var pass = true
   reg_poke(c.io.weightUpdate, 1)
   reg_poke(c.io.strideX, STRIDE_X)
@@ -31,7 +31,7 @@ class PEAWrapperV2Tests(c: PEArrayWrapperV2) extends AdvTester(c) {
     KERNEL_SIZE_Y = KERNEL_SIZE_Y_UPDATE
     STRIDE_X = STRIDE_X_UPDATE
     STRIDE_Y = STRIDE_Y_UPDATE
-    val DATA_SIZE = Random.nextInt(100) + KERNEL_SIZE_X + 1
+    val DATA_SIZE = 20
     val testData = List.tabulate(DATA_SIZE)(n => Random.nextInt(50))
     val testWeight = List.tabulate(KERNEL_SIZE_Y)(y => List.tabulate(KERNEL_SIZE_X)(x => Random.nextInt(10)))
     val resultSize = (KERNEL_SIZE_X + DATA_SIZE - 1) / STRIDE_X + (
@@ -80,10 +80,10 @@ class PEAWrapperV2Tests(c: PEArrayWrapperV2) extends AdvTester(c) {
       dataIn.inputs.enqueue(testData(i))
       takesteps(2)()
     }
-    KERNEL_SIZE_X_UPDATE = Random.nextInt(5) + 1
+    KERNEL_SIZE_X_UPDATE = KERNEL_SIZE_X
     KERNEL_SIZE_Y_UPDATE = KERNEL_SIZE_X_UPDATE
-    //STRIDE_X_UPDATE = Random.nextInt(KERNEL_SIZE_X_UPDATE) + 1
-    //STRIDE_Y_UPDATE = 1
+    STRIDE_X_UPDATE = STRIDE_X
+    STRIDE_Y_UPDATE = 1
     reg_poke(c.io.weightUpdate, 1)
     reg_poke(c.io.strideX, STRIDE_X_UPDATE)
     reg_poke(c.io.strideY, STRIDE_Y_UPDATE)
@@ -101,7 +101,7 @@ class PEAWrapperV2Tests(c: PEArrayWrapperV2) extends AdvTester(c) {
           pass = false
       }
     }
-    if(!pass) {
+    if(true) {
       println("")
       println(s"In iteration $cycles")
       println("DATA " + testData)
