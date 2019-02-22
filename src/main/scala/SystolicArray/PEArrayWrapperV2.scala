@@ -140,13 +140,18 @@ class PEArrayWrapperV2(
     // result when the kernel size doesn't match in X and Y
     when(cond) {
       dataFlow.foreach(_ := true.B)
-      weightFlow.foreach(_ := true.B)
+      for(col <- 0 until cols) {
+        weightFlow(col) := col.U <= flowCounter | state =/= DATA_FLOW.U
+      }
+      //weightFlow.foreach(_ := true.B)
       enableAllControl()
       setAllControlFlow(true)
-      when(Mux(state === DATA_FLOW.U, anyDataChannelFire, PEA.io.ioArray.head.in.data.ready)) {
-        flowCounter := Mux(flowCounter === kernelSizeX - 1.U, 0.U, flowCounter + 1.U)
-      }.otherwise {
-        flowCounter := flowCounter
+      when(PEA.io.ioArray.head.in.data.ready) {
+      //when(Mux(state === DATA_FLOW.U, anyDataChannelFire, PEA.io.ioArray.head.in.data.ready)) {
+        when(flowCounter < Mux(kernelSizeY > kernelSizeX, kernelSizeY, kernelSizeX) - 1.U) {
+          flowCounter := flowCounter + 1.U
+        }
+        //flowCounter := Mux(flowCounter === kernelSizeX - 1.U, 0.U, flowCounter + 1.U)
       }
       for (row <- 0 until rows) {
         controlCalculate(row) := activeDataChannel(row)
@@ -201,7 +206,7 @@ class PEArrayWrapperV2(
     // Refresh the weight in the array
     when(flowCounter === kernelSizeX - 1.U) {
       state := DATA_FLOW.U
-      flowCounter := 0.U
+      //flowCounter := 0.U
     } .elsewhen(weightAllValid) {
       flowCounter := Mux(flowCounter === kernelSizeX - 1.U, 0.U, flowCounter + 1.U)
     }
@@ -242,7 +247,7 @@ class PEArrayWrapperV2(
     when(dataInQueue.valid) {
       flowCounter := 0.U
       dataChannelEnq(cond = resultAllReady)
-    } .elsewhen(flowCounter =/= kernelSizeX - 1.U) {
+    } .elsewhen(flowCounter =/= Mux(kernelSizeY > kernelSizeX, kernelSizeY, kernelSizeX) - 1.U) {
       dataChannelEnq(cond = resultAllReady)
     } .otherwise {
       state := WEIGHT_CLEAR.U
@@ -336,8 +341,8 @@ class PEArrayWrapperV2(
     )
   }
 
-  rowController.io.kernelSize := kernelSizeX
-  rowController.io.stride := strideX
+  rowController.io.kernelSizeX := kernelSizeX
+  rowController.io.strideX := strideX
   rowController.io.flow := anyDataFlow
   rowController.io.outputEnable := state === DATA_FLOW.U | state === DATA_CLEAR.U | state === WEIGHT_CLEAR.U
   rowController.io.presetRequest := state === WEIGHT_QUEUE_FILL.U

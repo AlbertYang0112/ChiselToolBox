@@ -9,17 +9,17 @@ class PEAWrapperV2Tests(c: PEArrayWrapperV2) extends AdvTester(c) {
   val weightIn = c.io.weightIn.map{peBundle => DecoupledSource(peBundle)}
   val resultOut = c.io.resultOut.map{peBundle => IrrevocableSink(peBundle)}
 
-  val TEST_CYCLES = 2
+  val TEST_CYCLES = 100
   resultOut.foreach(_.outputs.clear())
 
-  var KERNEL_SIZE_X = 1
-  var KERNEL_SIZE_Y = 1
+  var KERNEL_SIZE_X = 5
+  var KERNEL_SIZE_Y = 5
   var STRIDE_X = 5
-  var STRIDE_Y = 5
+  var STRIDE_Y = 1
   var KERNEL_SIZE_X_UPDATE = KERNEL_SIZE_X
-  var KERNEL_SIZE_Y_UPDATE = KERNEL_SIZE_X
+  var KERNEL_SIZE_Y_UPDATE = KERNEL_SIZE_Y
   var STRIDE_X_UPDATE = 5
-  var STRIDE_Y_UPDATE = 5
+  var STRIDE_Y_UPDATE = 1
   var pass = true
   reg_poke(c.io.weightUpdate, 1)
   reg_poke(c.io.strideX, STRIDE_X)
@@ -80,9 +80,9 @@ class PEAWrapperV2Tests(c: PEArrayWrapperV2) extends AdvTester(c) {
       dataIn.inputs.enqueue(testData(i))
       takesteps(2)()
     }
-    KERNEL_SIZE_X_UPDATE = KERNEL_SIZE_X
-    KERNEL_SIZE_Y_UPDATE = KERNEL_SIZE_X_UPDATE
-    STRIDE_X_UPDATE = STRIDE_X
+    KERNEL_SIZE_X_UPDATE = Random.nextInt(4) + 2
+    KERNEL_SIZE_Y_UPDATE = Random.nextInt(4) + 2
+    STRIDE_X_UPDATE = Random.nextInt(7) + 1
     STRIDE_Y_UPDATE = 1
     reg_poke(c.io.weightUpdate, 1)
     reg_poke(c.io.strideX, STRIDE_X_UPDATE)
