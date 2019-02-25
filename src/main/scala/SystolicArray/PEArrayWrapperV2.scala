@@ -35,6 +35,7 @@ class PEArrayWrapperV2(
     val dataIn = DeqIO(UInt(dataWidth.W))
     val weightIn = Vec(weightChanNum, DeqIO(UInt(weightWidth.W)))
     val resultOut = Vec(rows, EnqIO(UInt(resultWidth.W)))
+    val lineLength = Input(UInt(8.W))
     // Control
     val weightUpdate = Input(Bool())
     val weightUpdateReady = Output(Bool())
@@ -54,18 +55,21 @@ class PEArrayWrapperV2(
     resultFIFODepth = PEResultFIFODepth))
   val rowController = Module(new PEARowController(rows = rows, spikeAt = -1))
   val colController = Module(new PEAColController(cols = cols))
+  val weightBuffer = Module(new PEAWeightBuffer(
+    cols = cols,
+    weightWidth = weightWidth,
+    bufferDepth = wrapFIFODepth))
 
   // IO Buffer
-  private val weightInQueueInput = List.fill(cols)(Wire(EnqIO(UInt(weightWidth.W))))
   val dataInQueueInput = Wire(EnqIO(UInt(dataWidth.W)))
   val dataInQueue = Queue(dataInQueueInput, wrapFIFODepth)
-  private val weightInQueue = List.tabulate(cols)(col => Queue(weightInQueueInput(col), chanFIFODepth))
   private val resultOutQueue = List.tabulate(rows)(row => Queue(PEA.io.ioArray(row).out.result, wrapFIFODepth))
 
   // States
   val flowCounter = RegInit(0.U(5.W))           //  Todo: Parameterize the width
   val resultOutCounter = RegInit(0.U(3.W))
   val state: UInt = RegInit(WEIGHT_CLEAR.U(STATE_WIDTH.W))
+  val dataCounter = RegInit(0.U(8.W))
 
   // State Indicator
   private val resultAllReady = Cat(PEA.io.ioArray.map(_.out.result.ready)).andR()
@@ -134,10 +138,6 @@ class PEArrayWrapperV2(
   io.weightUpdateReady := state === WEIGHT_QUEUE_FILL.U
 
   def dataChannelEnq(cond: Bool): Bool= {
-    //Todo: Add the support for kernels with different X and Y Size
-    // The data stream must stall several cycles per
-    // KERNEL_SIZE_X cycles waiting for the output of the
-    // result when the kernel size doesn't match in X and Y
     when(cond) {
       dataFlow.foreach(_ := true.B)
       for(col <- 0 until cols) {
@@ -151,6 +151,7 @@ class PEArrayWrapperV2(
         when(flowCounter < Mux(kernelSizeY > kernelSizeX, kernelSizeY, kernelSizeX) - 1.U) {
           flowCounter := flowCounter + 1.U
         }
+        dataCounter := dataCounter + 1.U
         //flowCounter := Mux(flowCounter === kernelSizeX - 1.U, 0.U, flowCounter + 1.U)
       }
       for (row <- 0 until rows) {
@@ -178,7 +179,8 @@ class PEArrayWrapperV2(
   def stateWeightClear(): Unit = {
     repeat := false.B
     setAllWeightFlow(flow = true)
-    when(Cat(weightInQueue.map(_.valid)).orR()) {
+    //when(Cat(weightInQueue.map(_.valid)).orR()) {
+    when(Cat(weightBuffer.io.weightOut.map(_.valid)).orR()) {
       flowCounter := 0.U
     } .otherwise {
       flowCounter := Mux(flowCounter === (cols - 1).U, 0.U, flowCounter + 1.U)
@@ -316,7 +318,8 @@ class PEArrayWrapperV2(
 
   // Weight Channel <- Weight Buffer
   for(col <- 0 until cols) {
-    PEA.io.ioArray(col).in.weight <> weightInQueue(col)
+    //PEA.io.ioArray(col).in.weight <> weightInQueue(col)
+    PEA.io.ioArray(col).in.weight <> weightBuffer.io.weightOut(col)
     PEA.io.ioArray(col).out.weight.ready := weightFlow(col) & weightFlowEnable
   }
 
@@ -331,15 +334,22 @@ class PEArrayWrapperV2(
 
   // Weight Repeat
   // Weight Buffer <- IO
+  //for(col <- 0 until cols) {
+  //  weightInQueueInput(col).valid := Mux(repeat,
+  //    weightInQueue(col).fire(), io.weightIn(col).valid & state === WEIGHT_QUEUE_FILL.U)
+  //  weightInQueueInput(col).bits := Mux(repeat,
+  //    weightInQueue(col).bits, io.weightIn(col).bits)
+  //  io.weightIn(col).ready := Mux(repeat,
+  //    false.B, weightInQueueInput(col).ready & state === WEIGHT_QUEUE_FILL.U
+  //  )
+  //}
+
   for(col <- 0 until cols) {
-    weightInQueueInput(col).valid := Mux(repeat,
-      weightInQueue(col).fire(), io.weightIn(col).valid & state === WEIGHT_QUEUE_FILL.U)
-    weightInQueueInput(col).bits := Mux(repeat,
-      weightInQueue(col).bits, io.weightIn(col).bits)
-    io.weightIn(col).ready := Mux(repeat,
-      false.B, weightInQueueInput(col).ready & state === WEIGHT_QUEUE_FILL.U
-    )
+    weightBuffer.io.weightIn(col) <> io.weightIn(col)
   }
+  weightBuffer.io.weightRepeat := repeat
+  weightBuffer.io.weightInputEnable := state === WEIGHT_QUEUE_FILL.U
+  weightBuffer.io.weightShift := false.B
 
   rowController.io.kernelSizeX := kernelSizeX
   rowController.io.strideX := strideX
@@ -362,6 +372,38 @@ class PEArrayWrapperV2(
     //PEA.io.ioArray(row).in.result.enq(0.U(resultWidth.W))
     PEA.io.ioArray(row).in.result.valid := false.B
     PEA.io.ioArray(row).in.result.bits := 0.U(resultWidth.W)
+  }
+}
+
+class PEAWeightBuffer(
+                     val cols: Int,
+                     val weightWidth: Int,
+                     val bufferDepth: Int
+                     ) extends Module {
+  val io = IO(new Bundle{
+    val weightIn = Vec(cols, DeqIO(UInt(weightWidth.W)))
+    val weightOut = Vec(cols, EnqIO(UInt(weightWidth.W)))
+    val weightRepeat = Input(Bool())
+    val weightShift = Input(Bool())
+    val weightInputEnable = Input(Bool())
+  })
+  val weightBufferInput = List.fill(cols)(Wire(EnqIO(UInt(weightWidth.W))))
+  val weightBuffer = List.tabulate(cols)(n => Queue(weightBufferInput(n), bufferDepth))
+  for(col <- 0 until cols) {
+    when(io.weightShift) {
+      weightBufferInput(col).valid := weightBuffer(if(col == cols - 1) 0 else col + 1).fire()
+      weightBufferInput(col).bits := weightBuffer(if(col == cols - 1) 0 else col + 1).bits
+      io.weightIn(col).ready := false.B
+    } .elsewhen(io.weightRepeat) {
+      weightBufferInput(col).valid := weightBuffer(col).fire()
+      weightBufferInput(col).bits := weightBuffer(col).bits
+      io.weightIn(col).ready := false.B
+    } .otherwise {
+      weightBufferInput(col).valid := io.weightIn(col).valid
+      weightBufferInput(col).bits := io.weightIn(col).bits
+      io.weightIn(col).ready := weightBufferInput(col).ready
+    }
+    io.weightOut(col) <> weightBuffer(col)
   }
 }
 
