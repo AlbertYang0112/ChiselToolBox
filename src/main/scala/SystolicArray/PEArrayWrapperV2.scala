@@ -247,9 +247,9 @@ class PEArrayWrapperV2(
 
   def stateDataClear(): Unit = {
     when(dataInQueue.valid) {
-      flowCounter := 0.U
       dataChannelEnq(cond = resultAllReady)
-    } .elsewhen(flowCounter =/= Mux(kernelSizeY > kernelSizeX, kernelSizeY, kernelSizeX) - 1.U) {
+      flowCounter := 0.U
+    } .elsewhen(flowCounter =/= Mux(kernelSizeY > kernelSizeX, kernelSizeY, kernelSizeX) - 1.U | Cat(rowController.io.active).orR()) {
       dataChannelEnq(cond = resultAllReady)
     } .otherwise {
       state := WEIGHT_CLEAR.U
@@ -332,18 +332,6 @@ class PEArrayWrapperV2(
     PEA.io.ioArray(col).out.control.ready := controlFlow(col)
   }
 
-  // Weight Repeat
-  // Weight Buffer <- IO
-  //for(col <- 0 until cols) {
-  //  weightInQueueInput(col).valid := Mux(repeat,
-  //    weightInQueue(col).fire(), io.weightIn(col).valid & state === WEIGHT_QUEUE_FILL.U)
-  //  weightInQueueInput(col).bits := Mux(repeat,
-  //    weightInQueue(col).bits, io.weightIn(col).bits)
-  //  io.weightIn(col).ready := Mux(repeat,
-  //    false.B, weightInQueueInput(col).ready & state === WEIGHT_QUEUE_FILL.U
-  //  )
-  //}
-
   for(col <- 0 until cols) {
     weightBuffer.io.weightIn(col) <> io.weightIn(col)
   }
@@ -353,10 +341,21 @@ class PEArrayWrapperV2(
 
   rowController.io.kernelSizeX := kernelSizeX
   rowController.io.strideX := strideX
-  rowController.io.flow := anyDataFlow
-  rowController.io.outputEnable := state === DATA_FLOW.U | state === DATA_CLEAR.U | state === WEIGHT_CLEAR.U
+  rowController.io.flow := anyDataFlow | state === DATA_CLEAR.U
+  rowController.io.clear := state === DATA_CLEAR.U & !dataInQueue.valid & flowCounter < kernelSizeX - 1.U
+  /*
+  when(state === DATA_FLOW.U) {
+    rowController.io.outputEnable := true.B
+  } .elsewhen(state === DATA_CLEAR.U & flowCounter < kernelSizeX - 1.U) {
+    rowController.io.outputEnable := true.B
+  } .otherwise {
+    rowController.io.outputEnable := false.B
+  }
+  */
+  rowController.io.outputEnable := state === DATA_FLOW.U | state === DATA_CLEAR.U
+  rowController.io.stopReallocate := state === DATA_CLEAR.U
   rowController.io.presetRequest := state === WEIGHT_QUEUE_FILL.U
-  rowController.io.clear := state === WEIGHT_CLEAR.U
+  //rowController.io.clear := state === WEIGHT_CLEAR.U
   for(chan <- 0 until rows) {
     activeDataChannel(chan) := rowController.io.active(chan)
   }
@@ -422,6 +421,7 @@ class PEARowController(
     val presetDone = Output(Bool())
 
     val clear = Input(Bool())
+    val stopReallocate = Input(Bool())
 
     val active = Vec(rows, Output(Bool()))
     val activeSpike = Vec(rows, Output(Bool()))
@@ -456,15 +456,15 @@ class PEARowController(
 
   private def step() = {
     for(chan <- 0 until rows) {
-      when(reallocateCounter === io.strideX - 1.U & nextActiveChannel === chan.U) {
+      when(reallocateCounter === io.strideX - 1.U & nextActiveChannel === chan.U & !io.stopReallocate) {
         /* Refresh the flow counter and re-active the channel */
         rowFlowCounter(chan) := 0.U
-      } .elsewhen(rowFlowCounter(chan) =/= io.kernelSizeX) {
+      } .elsewhen(rowFlowCounter(chan) =/= io.kernelSizeX & !io.clear) {
         rowFlowCounter(chan) := rowFlowCounter(chan) + 1.U
       }
     }
     /* Update the reallocate counter and the channel to be actived */
-    when(reallocateCounter === io.strideX - 1.U) {
+    when(reallocateCounter === io.strideX - 1.U | io.clear) {
       reallocateCounter := 0.U
       nextActiveChannel := nextActiveChannel + nextActiveChannelStep -
         Mux(nextActiveChannel + nextActiveChannelStep >= io.kernelSizeX, io.kernelSizeX, 0.U)
@@ -516,10 +516,24 @@ class PEARowController(
   //val activeSpike = List.fill(rows)(Wire(Bool()))
   for(chan <- 0 until rows) {
     when(!presetting) {
-      when(io.flow & rowFlowCounter(chan) === (if(spikeAt >= 0) spikeAt.U else io.kernelSizeX - (-spikeAt).U)) {
-        activeSpike(chan) := true.B
-      } .elsewhen(io.flow | io.clear) {
-        activeSpike(chan) := false.B
+      when(!io.clear) {
+        // Normal Run
+        when(io.flow & rowFlowCounter(chan) === (if (spikeAt >= 0) spikeAt.U else io.kernelSizeX - (-spikeAt).U)) {
+          activeSpike(chan) := true.B
+        }.elsewhen(io.flow) {
+          activeSpike(chan) := false.B
+        }
+      }.otherwise {
+        // Data Clear
+        when(nextActiveChannel === chan.U & rowFlowCounter(chan) =/= io.kernelSizeX) {
+          activeSpike(chan) := true.B
+          rowFlowCounter(chan) := io.kernelSizeX
+        } .otherwise {
+          activeSpike(chan) := false.B
+        }
+        when(activeSpike(chan)) {
+          rowFlowCounter(chan) := io.kernelSizeX
+        }
       }
     } .otherwise {
       activeSpike(chan) := false.B
