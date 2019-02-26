@@ -9,24 +9,25 @@ class PEAWrapperV2Tests(c: PEArrayWrapperV2) extends AdvTester(c) {
   val weightIn = c.io.weightIn.map{peBundle => DecoupledSource(peBundle)}
   val resultOut = c.io.resultOut.map{peBundle => IrrevocableSink(peBundle)}
 
-  val TEST_CYCLES = 100
+  val TEST_CYCLES = 1000000000
   resultOut.foreach(_.outputs.clear())
 
-  var KERNEL_SIZE_X = 5
-  var KERNEL_SIZE_Y = 5
-  var STRIDE_X = 5
+  var KERNEL_SIZE_X = 1
+  var KERNEL_SIZE_Y = 1
+  var STRIDE_X = 1
   var STRIDE_Y = 1
   var KERNEL_SIZE_X_UPDATE = KERNEL_SIZE_X
   var KERNEL_SIZE_Y_UPDATE = KERNEL_SIZE_Y
-  var STRIDE_X_UPDATE = 5
+  var STRIDE_X_UPDATE = 1
   var STRIDE_Y_UPDATE = 1
   var pass = true
+  var done = false
   reg_poke(c.io.weightUpdate, 1)
   reg_poke(c.io.strideX, STRIDE_X)
   reg_poke(c.io.strideY, STRIDE_Y)
   reg_poke(c.io.kernelSizeX, KERNEL_SIZE_X)
   reg_poke(c.io.kernelSizeY, KERNEL_SIZE_Y)
-  for(cycles <- 0 until TEST_CYCLES if pass) {
+  for(cycles <- 0 until TEST_CYCLES if pass & !done) {
     KERNEL_SIZE_X = KERNEL_SIZE_X_UPDATE
     KERNEL_SIZE_Y = KERNEL_SIZE_Y_UPDATE
     STRIDE_X = STRIDE_X_UPDATE
@@ -80,10 +81,31 @@ class PEAWrapperV2Tests(c: PEArrayWrapperV2) extends AdvTester(c) {
       dataIn.inputs.enqueue(testData(i))
       takesteps(2)()
     }
-    KERNEL_SIZE_X_UPDATE = Random.nextInt(4) + 2
-    KERNEL_SIZE_Y_UPDATE = Random.nextInt(4) + 2
-    STRIDE_X_UPDATE = Random.nextInt(7) + 1
-    STRIDE_Y_UPDATE = 1
+    //KERNEL_SIZE_X_UPDATE = Random.nextInt(4) + 2
+    //KERNEL_SIZE_Y_UPDATE = Random.nextInt(4) + 2
+    //STRIDE_X_UPDATE = Random.nextInt(7) + 1
+    //STRIDE_Y_UPDATE = 1
+    KERNEL_SIZE_X_UPDATE = KERNEL_SIZE_X + 1
+    if(KERNEL_SIZE_X_UPDATE > 5) {
+      KERNEL_SIZE_X_UPDATE = 1
+      KERNEL_SIZE_Y_UPDATE = KERNEL_SIZE_Y + 1
+      if(KERNEL_SIZE_Y_UPDATE > 5) {
+        KERNEL_SIZE_Y_UPDATE = 1
+        STRIDE_X_UPDATE = STRIDE_X + 1
+        if(STRIDE_X_UPDATE > 7) {
+          STRIDE_X_UPDATE = 1
+          STRIDE_Y_UPDATE = STRIDE_Y + 1
+          if(STRIDE_Y_UPDATE > 7) {
+            STRIDE_Y_UPDATE = 1
+            done = true
+          }
+        }
+      }
+    }
+    //KERNEL_SIZE_X_UPDATE = 1
+    //KERNEL_SIZE_Y_UPDATE = 1
+    //STRIDE_X_UPDATE = 1
+    //STRIDE_Y_UPDATE = 1
     reg_poke(c.io.weightUpdate, 1)
     reg_poke(c.io.strideX, STRIDE_X_UPDATE)
     reg_poke(c.io.strideY, STRIDE_Y_UPDATE)
@@ -97,11 +119,11 @@ class PEAWrapperV2Tests(c: PEArrayWrapperV2) extends AdvTester(c) {
         expect(resultGet(chan)(i) == expectedResult(chan)(i),
           msg = s"\nChannel $chan.$i " +
             s"Expect " + expectedResult(chan)(i) + " Get " + resultGet(chan)(i))
-        if(resultGet(chan)(i) != expectedResult(chan)(i))
+        if(resultGet(chan)(i) != expectedResult(chan)(i) || resultGet(chan).size != expectedResult(chan).size)
           pass = false
       }
     }
-    if(true) {
+    if(!pass) {
       println("")
       println(s"In iteration $cycles")
       println("DATA " + testData)
