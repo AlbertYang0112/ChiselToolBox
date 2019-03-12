@@ -9,7 +9,7 @@ class PEAWrapperV2Tests(c: PEArrayWrapperV2) extends AdvTester(c) {
   val weightIn = c.io.weightIn.map{peBundle => DecoupledSource(peBundle)}
   val resultOut = c.io.resultOut.map{peBundle => IrrevocableSink(peBundle)}
 
-  val TEST_CYCLES = 1000000000
+  val TEST_CYCLES = 20
   resultOut.foreach(_.outputs.clear())
 
   var KERNEL_SIZE_X = 1
@@ -70,17 +70,19 @@ class PEAWrapperV2Tests(c: PEArrayWrapperV2) extends AdvTester(c) {
           else
             0
         )
-        takestep()
+        //takestep()
       }
     }
+    takesteps(10)()
     reg_poke(c.io.weightUpdate, 0)
     takestep()
     takesteps(2)()
     // Feed data
     for(i <- testData.indices) {
       dataIn.inputs.enqueue(testData(i))
-      takesteps(2)()
+      takesteps(1)()
     }
+    takesteps(10)()
     //KERNEL_SIZE_X_UPDATE = Random.nextInt(4) + 2
     //KERNEL_SIZE_Y_UPDATE = Random.nextInt(4) + 2
     //STRIDE_X_UPDATE = Random.nextInt(7) + 1

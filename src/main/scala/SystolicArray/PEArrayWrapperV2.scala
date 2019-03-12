@@ -342,7 +342,8 @@ class PEArrayWrapperV2(
   rowController.io.kernelSizeX := kernelSizeX
   rowController.io.strideX := strideX
   rowController.io.flow := anyDataFlow | state === DATA_CLEAR.U
-  rowController.io.clear := state === DATA_CLEAR.U & !dataInQueue.valid & flowCounter < kernelSizeX - 1.U
+  rowController.io.clear := state === DATA_CLEAR.U & !dataInQueue.valid
+  rowController.io.controlValid := PEA.io.ioArray.head.in.control.valid
   /*
   when(state === DATA_FLOW.U) {
     rowController.io.outputEnable := true.B
@@ -353,8 +354,8 @@ class PEArrayWrapperV2(
   }
   */
   rowController.io.outputEnable := state === DATA_FLOW.U | state === DATA_CLEAR.U
-  rowController.io.stopReallocate := state === DATA_CLEAR.U
   rowController.io.presetRequest := state === WEIGHT_QUEUE_FILL.U
+  rowController.io.stopReallocate := state === DATA_CLEAR.U
   //rowController.io.clear := state === WEIGHT_CLEAR.U
   for(chan <- 0 until rows) {
     activeDataChannel(chan) := rowController.io.active(chan)
@@ -425,6 +426,7 @@ class PEARowController(
 
     val active = Vec(rows, Output(Bool()))
     val activeSpike = Vec(rows, Output(Bool()))
+    val controlValid = Input(Bool())
   })
   val rowFlowCounter:List[UInt] = List.fill(rows)(RegInit(1.U(3.W)))
   val nextActiveChannel = RegInit(0.U(4.W))
@@ -434,6 +436,7 @@ class PEARowController(
   val presetRequestPrev = RegNext(io.presetRequest)
   val presetting = RegInit(false.B)
   val presetCounter = RegInit(0.U(3.W))
+
   private def preset(): UInt = {
     when(presetCounter < io.kernelSizeX) {
       /* Update the flow counter */
@@ -456,7 +459,7 @@ class PEARowController(
 
   private def step() = {
     for(chan <- 0 until rows) {
-      when(reallocateCounter === io.strideX - 1.U & nextActiveChannel === chan.U & !io.stopReallocate) {
+      when(reallocateCounter === io.strideX - 1.U & nextActiveChannel === chan.U /*& !io.stopReallocate*/) {
         /* Refresh the flow counter and re-active the channel */
         rowFlowCounter(chan) := 0.U
       } .elsewhen(rowFlowCounter(chan) =/= io.kernelSizeX & !io.clear) {
@@ -516,23 +519,25 @@ class PEARowController(
   //val activeSpike = List.fill(rows)(Wire(Bool()))
   for(chan <- 0 until rows) {
     when(!presetting) {
+      // Normal Run
       when(!io.clear) {
-        // Normal Run
         when(io.flow & rowFlowCounter(chan) === (if (spikeAt >= 0) spikeAt.U else io.kernelSizeX - (-spikeAt).U)) {
           activeSpike(chan) := true.B
         }.elsewhen(io.flow) {
           activeSpike(chan) := false.B
         }
-      }.otherwise {
-        // Data Clear
-        when(nextActiveChannel === chan.U & rowFlowCounter(chan) =/= io.kernelSizeX) {
-          activeSpike(chan) := true.B
+      } .otherwise {
+        when(chan.U === nextActiveChannel & rowFlowCounter(chan) < io.kernelSizeX) {
+          when(rowFlowCounter(chan) =/= 0.U) {
+            activeSpike(chan) := true.B
+          } .otherwise {
+            activeSpike(chan) := false.B
+          }
           rowFlowCounter(chan) := io.kernelSizeX
         } .otherwise {
-          activeSpike(chan) := false.B
-        }
-        when(activeSpike(chan)) {
-          rowFlowCounter(chan) := io.kernelSizeX
+          when(io.controlValid) {
+            activeSpike(chan) := false.B
+          }
         }
       }
     } .otherwise {
