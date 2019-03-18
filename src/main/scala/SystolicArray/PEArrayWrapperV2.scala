@@ -12,6 +12,7 @@ trait PEAWState {
   val WEIGHT_REFRESH =    2
   val DATA_FLOW =         3
   val DATA_CLEAR =        4
+  val WEIGHT_REFLOW =     5
 }
 
 // Code Relating TodoList
@@ -59,6 +60,7 @@ class PEArrayWrapperV2(
     val strideX = Input(UInt(8.W))
     val strideY = Input(UInt(8.W))
     val flush = Input(Bool())
+    val continuous = Input(Bool())
   })
 
   // Components
@@ -85,6 +87,8 @@ class PEArrayWrapperV2(
   val resultOutCounter = RegInit(0.U(3.W))
   val state: UInt = RegInit(WEIGHT_CLEAR.U(STATE_WIDTH.W))
   val dataCounter = RegInit(0.U(8.W))
+  val weightFlowConter = RegInit(0.U(3.W))
+  val weightCount = RegInit(0.U(3.W))
 
   // State Indicator
   private val resultAllReady = Cat(PEA.io.ioArray.map(_.out.result.ready)).andR()
@@ -150,7 +154,11 @@ class PEArrayWrapperV2(
   for(chan <- 0 until cols) {
     PEA.io.ioArray(chan).in.colActivate := activeCol(chan)
   }
-  io.weightUpdateReady := state === WEIGHT_QUEUE_FILL.U
+  io.weightUpdateReady := state === WEIGHT_QUEUE_FILL.U | state === WEIGHT_REFLOW.U
+
+  when(weightBuffer.io.weightOut.head.fire()) {
+    weightFlowConter := Mux(weightFlowConter === weightCount - 1.U, 0.U, weightFlowConter + 1.U)
+  }
 
   def dataChannelEnq(cond: Bool): Bool= {
     when(cond) {
@@ -163,7 +171,7 @@ class PEArrayWrapperV2(
       setAllControlFlow(true)
       when(PEA.io.ioArray.head.in.data.ready) {
       //when(Mux(state === DATA_FLOW.U, anyDataChannelFire, PEA.io.ioArray.head.in.data.ready)) {
-        when(flowCounter < Mux(kernelSizeY > kernelSizeX, kernelSizeY, kernelSizeX) - 1.U) {
+        when(flowCounter < Mux(kernelSizeY > kernelSizeX, kernelSizeY, kernelSizeX) - 0.U) {
           flowCounter := flowCounter + 1.U
         }
         dataCounter := dataCounter + 1.U
@@ -172,22 +180,26 @@ class PEArrayWrapperV2(
       for (row <- 0 until rows) {
         controlCalculate(row) := activeDataChannel(row)
       }
-      for(row <- 0 until rows) {
-        controlClearSum(row) := rowController.io.activeSpike(row)
-        controlOutputSum(row) := rowController.io.activeSpike(row)
-      }
+      //for(row <- 0 until rows) {
+      //  controlClearSum(row) := rowController.io.activeSpike(row)
+      //  controlOutputSum(row) := rowController.io.activeSpike(row)
+      //}
     } .otherwise {
       setAllDataFlow(false)
       setAllWeightFlow(false)
       controlCalculate.foreach(_ := false.B)
-      for(row <- 0 until rows) {
-        controlClearSum(row) := rowController.io.activeSpike(row)
-        controlOutputSum(row) := rowController.io.activeSpike(row)
-      }
+      //for(row <- 0 until rows) {
+      //  controlClearSum(row) := rowController.io.activeSpike(row)
+      //  controlOutputSum(row) := rowController.io.activeSpike(row)
+      //}
       setAllControlFlow(false)
       disableAllControl()
     }
     cond
+  }
+  for(row <- 0 until rows) {
+    controlClearSum(row) := rowController.io.activeSpike(row)
+    controlOutputSum(row) := rowController.io.activeSpike(row)
   }
 
   // State Machine Uints
@@ -208,6 +220,8 @@ class PEArrayWrapperV2(
       }
     }
 
+    weightCount := 0.U
+
     controlCalculate.foreach(_ := false.B)
     controlClearSum.foreach(_ := false.B)
     for(row <- 0 until rows) {
@@ -223,6 +237,7 @@ class PEArrayWrapperV2(
     // Refresh the weight in the array
     when(flowCounter === kernelSizeX - 1.U) {
       state := DATA_FLOW.U
+      weightFlowConter := 0.U
       //flowCounter := 0.U
     } .elsewhen(weightAllValid) {
       flowCounter := Mux(flowCounter === kernelSizeX - 1.U, 0.U, flowCounter + 1.U)
@@ -264,12 +279,31 @@ class PEArrayWrapperV2(
     when(dataInQueue.valid) {
       dataChannelEnq(cond = resultAllReady)
       flowCounter := 0.U
-    } .elsewhen(flowCounter =/= Mux(kernelSizeY > kernelSizeX, kernelSizeY, kernelSizeX) - 1.U | Cat(rowController.io.active).orR()) {
+    } .elsewhen(flowCounter =/= Mux(kernelSizeY > kernelSizeX, kernelSizeY, kernelSizeX) - 0.U | Cat(rowController.io.active).orR()) {
       dataChannelEnq(cond = resultAllReady)
     } .otherwise {
-      state := WEIGHT_CLEAR.U
+      when(io.continuous) {
+        state := WEIGHT_REFLOW.U
+      } .otherwise {
+        state := WEIGHT_CLEAR.U
+      }
       dataChannelEnq(cond = resultAllReady)
     }
+  }
+
+  def stateWeightReflow(): Unit = {
+    when(weightFlowConter === 0.U) {
+      setAllWeightFlow(false)
+    } .otherwise {
+      setAllWeightFlow(true)
+    }
+    when(weightFlowConter === 0.U & rowController.io.presetDone) {
+      state := DATA_FLOW.U
+    }
+    setAllDataFlow(false)
+    setAllChannelControl(calculate = false, outputSum = false, clearSum = false)
+    setAllControlFlow(true)
+    disableAllControl()
   }
 
   when(state === WEIGHT_CLEAR.U) {
@@ -282,6 +316,9 @@ class PEArrayWrapperV2(
     } .otherwise {
       repeat := false.B
     }
+    when(io.weightIn.head.fire()) {
+      weightCount := weightCount + 1.U
+    }
     setAllChannelControl(calculate = false, outputSum = false, clearSum = true)
     setAllControlFlow(true)
     enableAllControl(false)
@@ -293,6 +330,8 @@ class PEArrayWrapperV2(
     stateDataFlow()
   } .elsewhen(state === DATA_CLEAR.U) {
     stateDataClear()
+  } .elsewhen(state === WEIGHT_REFLOW.U) {
+    stateWeightReflow()
   } .otherwise {
     state := DATA_CLEAR.U
     // Todo: Fix the bug in data clear stage
@@ -369,7 +408,7 @@ class PEArrayWrapperV2(
   }
   */
   rowController.io.outputEnable := state === DATA_FLOW.U | state === DATA_CLEAR.U
-  rowController.io.presetRequest := state === WEIGHT_QUEUE_FILL.U
+  rowController.io.presetRequest := state === WEIGHT_QUEUE_FILL.U | state === WEIGHT_REFLOW.U
   rowController.io.stopReallocate := state === DATA_CLEAR.U
   //rowController.io.clear := state === WEIGHT_CLEAR.U
   for(chan <- 0 until rows) {
@@ -377,7 +416,7 @@ class PEArrayWrapperV2(
   }
   colController.io.kernelSize := kernelSizeY
   colController.io.stride := strideY
-  colController.io.outputEnable := anyDataFlow | state === WEIGHT_CLEAR.U
+  colController.io.outputEnable := state === DATA_FLOW.U | state === WEIGHT_CLEAR.U | anyDataFlow
   for(col <- 0 until cols) {
     activeCol(col) := colController.io.active(col)
   }
@@ -573,7 +612,14 @@ class PEAColController(
     val active = Vec(cols, Output(Bool()))
   })
 
+  val activeChain = List.fill(cols)(RegInit(false.B))
+
+  activeChain.head := io.outputEnable
+  for(col <- 1 until cols) {
+    activeChain(col) := activeChain(col - 1)
+  }
+
   for(col <- 0 until cols) {
-    io.active(col) := col.U < io.kernelSize & io.outputEnable
+    io.active(col) := col.U < io.kernelSize & activeChain(col)
   }
 }
