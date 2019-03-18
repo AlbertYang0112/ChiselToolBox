@@ -14,9 +14,24 @@ trait PEAWState {
   val DATA_CLEAR =        4
 }
 
-// Todo: Add padding control(the module now is with padding).
+// Code Relating TodoList
 // Todo: Modularization
 // Todo: Add the type annotation
+// Todo: Remove the redundancy
+
+// Function Relating TodoList
+// Main:
+// Todo: Continuous processing between lines.
+// Todo: Weight rolling.
+// Todo: Stretch pad memory for weight storage.
+// Todo: SIMD.
+// Todo: MIMD.
+// Todo: Result buffer.
+// Todo: Interconnection unit and global scheduler between systolic array blocks.
+// Todo: DMA / PCIE (May be implemented in Verilog with Xilinx IP cores)
+// Auxiliary:
+// Todo: Add padding control(the module now is with padding).
+
 
 class PEArrayWrapperV2(
                         val dataWidth: Int,
