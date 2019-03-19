@@ -22,7 +22,7 @@ trait PEAWState {
 
 // Function Relating TodoList
 // Main:
-// Todo: Continuous processing between lines.
+// DoneTodo: Continuous processing between lines.
 // Todo: Weight rolling.
 // Todo: Stretch pad memory for weight storage.
 // Todo: SIMD.
@@ -171,7 +171,7 @@ class PEArrayWrapperV2(
       setAllControlFlow(true)
       when(PEA.io.ioArray.head.in.data.ready) {
       //when(Mux(state === DATA_FLOW.U, anyDataChannelFire, PEA.io.ioArray.head.in.data.ready)) {
-        when(flowCounter < Mux(kernelSizeY > kernelSizeX, kernelSizeY, kernelSizeX) - 0.U) {
+        when(flowCounter < Mux(kernelSizeY > kernelSizeX, kernelSizeY, kernelSizeX) + 2.U) {
           flowCounter := flowCounter + 1.U
         }
         dataCounter := dataCounter + 1.U
@@ -279,7 +279,7 @@ class PEArrayWrapperV2(
     when(dataInQueue.valid) {
       dataChannelEnq(cond = resultAllReady)
       flowCounter := 0.U
-    } .elsewhen(flowCounter =/= Mux(kernelSizeY > kernelSizeX, kernelSizeY, kernelSizeX) - 0.U | Cat(rowController.io.active).orR()) {
+    } .elsewhen(flowCounter =/= Mux(kernelSizeY > kernelSizeX, kernelSizeY, kernelSizeX) + 2.U | Cat(rowController.io.active).orR()) {
       dataChannelEnq(cond = resultAllReady)
     } .otherwise {
       when(io.continuous) {
