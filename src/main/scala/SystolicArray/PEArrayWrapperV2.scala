@@ -61,6 +61,7 @@ class PEArrayWrapperV2(
     val strideY = Input(UInt(8.W))
     val flush = Input(Bool())
     val continuous = Input(Bool())
+    val lastBit = Input(Bool())
   })
 
   // Components
@@ -306,6 +307,24 @@ class PEArrayWrapperV2(
     disableAllControl()
   }
 
+  val weightShiftCounter = RegInit(0.U(3.W))
+  val weightShifting = RegInit(false.B)
+
+  when(io.lastBit | weightShifting) {
+    when(io.lastBit) {
+      weightShifting := true.B
+      weightShiftCounter := 0.U
+    }
+    when(weightBuffer.io.weightOut.head.fire()) {
+      when(weightShiftCounter === weightCount) {
+        weightShifting := false.B
+        weightShiftCounter := 0.U
+      } .otherwise {
+        weightShiftCounter := weightShiftCounter + 1.U
+      }
+    }
+  }
+
   when(state === WEIGHT_CLEAR.U) {
     stateWeightClear()
   } .elsewhen(state === WEIGHT_QUEUE_FILL.U) {
@@ -391,7 +410,8 @@ class PEArrayWrapperV2(
   }
   weightBuffer.io.weightRepeat := repeat
   weightBuffer.io.weightInputEnable := state === WEIGHT_QUEUE_FILL.U
-  weightBuffer.io.weightShift := false.B
+  weightBuffer.io.weightShift := weightShifting
+  weightBuffer.io.kernelSizeY := kernelSizeY
 
   rowController.io.kernelSizeX := kernelSizeX
   rowController.io.strideX := strideX
@@ -440,19 +460,25 @@ class PEAWeightBuffer(
     val weightRepeat = Input(Bool())
     val weightShift = Input(Bool())
     val weightInputEnable = Input(Bool())
+    val kernelSizeY = Input(UInt(3.W))
   })
   val weightBufferInput = List.fill(cols)(Wire(EnqIO(UInt(weightWidth.W))))
   val weightBuffer = List.tabulate(cols)(n => Queue(weightBufferInput(n), bufferDepth))
   for(col <- 0 until cols) {
     when(io.weightShift) {
-      weightBufferInput(col).valid := weightBuffer(if(col == cols - 1) 0 else col + 1).fire()
-      weightBufferInput(col).bits := weightBuffer(if(col == cols - 1) 0 else col + 1).bits
+      when(col.U === io.kernelSizeY - 1.U) {
+        weightBufferInput(col).valid := weightBuffer.head.fire()
+        weightBufferInput(col).bits := weightBuffer.head.bits
+      } .otherwise {
+        weightBufferInput(col).valid := weightBuffer(if(col == cols - 1) 0 else col + 1).fire()
+        weightBufferInput(col).bits := weightBuffer(if(col == cols - 1) 0 else col + 1).bits
+      }
       io.weightIn(col).ready := false.B
-    } .elsewhen(io.weightRepeat) {
+    }.elsewhen(io.weightRepeat) {
       weightBufferInput(col).valid := weightBuffer(col).fire()
       weightBufferInput(col).bits := weightBuffer(col).bits
       io.weightIn(col).ready := false.B
-    } .otherwise {
+    }.otherwise {
       weightBufferInput(col).valid := io.weightIn(col).valid
       weightBufferInput(col).bits := io.weightIn(col).bits
       io.weightIn(col).ready := weightBufferInput(col).ready
