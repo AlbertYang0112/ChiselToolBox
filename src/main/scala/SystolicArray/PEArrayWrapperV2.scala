@@ -23,7 +23,8 @@ trait PEAWState {
 // Function Relating TodoList
 // Main:
 // DoneTodo: Continuous processing between lines.
-// Todo: Weight rolling.
+// Todo: Weight rolling. Merge the weight rolling with the data clear state.
+//  Roll the weight together with the data flow would result in the state conflict.
 // Todo: Stretch pad memory for weight storage.
 // Todo: SIMD.
 // Todo: MIMD.
@@ -77,11 +78,15 @@ class PEArrayWrapperV2(
     cols = cols,
     weightWidth = weightWidth,
     bufferDepth = wrapFIFODepth))
+  val resultBuffer = Module(new PEAResultBuffer(
+    cols = cols,
+    resultWidth = weightWidth + dataWidth,
+    bufferDepth = 50
+  ))
 
   // IO Buffer
   val dataInQueueInput = Wire(EnqIO(UInt(dataWidth.W)))
   val dataInQueue = Queue(dataInQueueInput, wrapFIFODepth)
-  private val resultOutQueue = List.tabulate(rows)(row => Queue(PEA.io.ioArray(row).out.result, wrapFIFODepth))
 
   // States
   val flowCounter = RegInit(0.U(5.W))           //  Todo: Parameterize the width
@@ -361,14 +366,6 @@ class PEArrayWrapperV2(
     disableAllControl()
   }
 
-  // IO <- Result Buffer
-  for(row <- 0 until rows) {
-    io.resultOut(row).bits := resultOutQueue(row).bits
-    io.resultOut(row).valid := resultOutQueue(row).valid
-    resultOutQueue(row).ready := io.resultOut(row).ready
-    //io.resultOut(row) <> resultOutQueue(row)
-  }
-
   // Data Buffer <- IO
   dataInQueueInput.bits := io.dataIn.bits
   dataInQueueInput.valid := Mux(state === DATA_FLOW.U, io.dataIn.valid, false.B)
@@ -408,6 +405,12 @@ class PEArrayWrapperV2(
   for(col <- 0 until cols) {
     weightBuffer.io.weightIn(col) <> io.weightIn(col)
   }
+
+  for(col <- 0 until cols) {
+    resultBuffer.io.resultIn(col) <> PEA.io.ioArray(col).out.result
+    io.resultOut(col) <> resultBuffer.io.resultOut(col)
+  }
+
   weightBuffer.io.weightRepeat := repeat
   weightBuffer.io.weightInputEnable := state === WEIGHT_QUEUE_FILL.U
   weightBuffer.io.weightShift := weightShifting
@@ -446,6 +449,22 @@ class PEArrayWrapperV2(
     //PEA.io.ioArray(row).in.result.enq(0.U(resultWidth.W))
     PEA.io.ioArray(row).in.result.valid := false.B
     PEA.io.ioArray(row).in.result.bits := 0.U(resultWidth.W)
+  }
+}
+
+class PEAResultBuffer(
+                     val cols: Int,
+                     val resultWidth: Int,
+                     val bufferDepth: Int
+                     ) extends Module {
+  val io = IO(new Bundle{
+    val resultIn = Vec(cols, DeqIO(UInt(resultWidth.W)))
+    val resultOut = Vec(cols, EnqIO(UInt(resultWidth.W)))
+  })
+
+  val resultBuffer = List.tabulate(cols)(n => Queue(io.resultIn(n), bufferDepth))
+  for(i <- resultBuffer.indices) {
+    io.resultOut(i) <> resultBuffer(i)
   }
 }
 

@@ -9,7 +9,7 @@ class PEAWrapperV2Tests(c: PEArrayWrapperV2) extends AdvTester(c) {
   val weightIn = c.io.weightIn.map{peBundle => DecoupledSource(peBundle)}
   val resultOut = c.io.resultOut.map{peBundle => IrrevocableSink(peBundle)}
 
-  val TEST_CYCLES = 5
+  val TEST_CYCLES = 2000
   resultOut.foreach(_.outputs.clear())
 
   def Convolution1D(data: List[Int], weight: List[Int], stride: Int): List[Int] = {
@@ -330,11 +330,11 @@ class PEAWrapperV2Tests(c: PEArrayWrapperV2) extends AdvTester(c) {
 
       }
 
-      val DATA_SIZE = 50
+      val DATA_SIZE = 20 + cycles % 5
       val testData = List.tabulate(DATA_SIZE)(n => Random.nextInt(50))
       val expectedResult = List.tabulate(KERNEL_SIZE_Y){y =>
         Convolution1D(testData,
-          testWeight((y + cycles) % KERNEL_SIZE_Y),
+          testWeight((y + cycles % 5) % KERNEL_SIZE_Y),
           STRIDE_X)
       }
       resultOut.foreach(_.outputs.clear())
@@ -354,6 +354,18 @@ class PEAWrapperV2Tests(c: PEArrayWrapperV2) extends AdvTester(c) {
       takesteps(10)()
       //reg_poke(c.io.lastFew, 0)
 
+      if(cycles % 5 == 4) {
+        KERNEL_SIZE_X_UPDATE = KERNEL_SIZE_X + 1
+        if (KERNEL_SIZE_X_UPDATE > 5) {
+          KERNEL_SIZE_X_UPDATE = 1
+          KERNEL_SIZE_Y_UPDATE = KERNEL_SIZE_Y + 1
+          if (KERNEL_SIZE_Y_UPDATE > 5) {
+            KERNEL_SIZE_Y_UPDATE = 1
+            done = true
+          }
+        }
+      }
+
       reg_poke(c.io.weightUpdate, 1)
       reg_poke(c.io.strideX, STRIDE_X_UPDATE)
       reg_poke(c.io.strideY, STRIDE_Y_UPDATE)
@@ -369,6 +381,7 @@ class PEAWrapperV2Tests(c: PEArrayWrapperV2) extends AdvTester(c) {
         reg_poke(c.io.continuous, 0)
       }
       takesteps(20)()
+
       val resultGet = List.tabulate(resultOut.size){n => resultOut(n).outputs.toList}
       resultOut.foreach(_.outputs.clear())
       for(chan <- expectedResult.indices) {
