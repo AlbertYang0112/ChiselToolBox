@@ -12,7 +12,8 @@ trait PEAWState {
   val WEIGHT_REFRESH =    2
   val DATA_FLOW =         3
   val DATA_CLEAR =        4
-  val WEIGHT_REFLOW =     5
+  val WEIGHT_ROLL =       5
+  val WEIGHT_REFLOW =     6
 }
 
 // Code Relating TodoList
@@ -23,7 +24,7 @@ trait PEAWState {
 // Function Relating TodoList
 // Main:
 // DoneTodo: Continuous processing between lines.
-// Todo: Weight rolling. Merge the weight rolling with the data clear state.
+// DoneTodo: Weight rolling. Merge the weight rolling with the data clear state.
 //  Roll the weight together with the data flow would result in the state conflict.
 // Todo: Stretch pad memory for weight storage.
 // Todo: SIMD.
@@ -281,6 +282,26 @@ class PEArrayWrapperV2(
     }
   }
 
+  val weightShiftCounter = RegInit(0.U(3.W))
+  val weightShifting = RegInit(false.B)
+
+  /*
+  when(io.lastBit | weightShifting) {
+    when(io.lastBit) {
+      weightShifting := true.B
+      weightShiftCounter := 0.U
+    }
+    when(weightBuffer.io.weightOut.head.fire()) {
+      when(weightShiftCounter === weightCount) {
+        weightShifting := false.B
+        weightShiftCounter := 0.U
+      } .otherwise {
+        weightShiftCounter := weightShiftCounter + 1.U
+      }
+    }
+  }
+  */
+
   def stateDataClear(): Unit = {
     when(dataInQueue.valid) {
       dataChannelEnq(cond = resultAllReady)
@@ -288,13 +309,31 @@ class PEArrayWrapperV2(
     } .elsewhen(flowCounter =/= Mux(kernelSizeY > kernelSizeX, kernelSizeY, kernelSizeX) + 2.U | Cat(rowController.io.active).orR()) {
       dataChannelEnq(cond = resultAllReady)
     } .otherwise {
+      weightShiftCounter := 0.U
       when(io.continuous) {
-        state := WEIGHT_REFLOW.U
+        state := WEIGHT_ROLL.U
       } .otherwise {
         state := WEIGHT_CLEAR.U
       }
       dataChannelEnq(cond = resultAllReady)
     }
+  }
+
+  def stateWeightRoll(): Unit = {
+    when(weightShiftCounter === weightCount) {
+      weightShifting := false.B
+      weightShiftCounter := 0.U
+      flowCounter := 0.U
+      state := WEIGHT_QUEUE_FILL.U
+    } .otherwise {
+      weightShiftCounter := weightShiftCounter + 1.U
+      weightShifting := true.B
+    }
+    setAllDataFlow(false)
+    setAllWeightFlow(true)
+    setAllChannelControl(calculate = false, outputSum = false, clearSum = false)
+    setAllControlFlow(true)
+    disableAllControl()
   }
 
   def stateWeightReflow(): Unit = {
@@ -312,23 +351,6 @@ class PEArrayWrapperV2(
     disableAllControl()
   }
 
-  val weightShiftCounter = RegInit(0.U(3.W))
-  val weightShifting = RegInit(false.B)
-
-  when(io.lastBit | weightShifting) {
-    when(io.lastBit) {
-      weightShifting := true.B
-      weightShiftCounter := 0.U
-    }
-    when(weightBuffer.io.weightOut.head.fire()) {
-      when(weightShiftCounter === weightCount) {
-        weightShifting := false.B
-        weightShiftCounter := 0.U
-      } .otherwise {
-        weightShiftCounter := weightShiftCounter + 1.U
-      }
-    }
-  }
 
   when(state === WEIGHT_CLEAR.U) {
     stateWeightClear()
@@ -354,6 +376,8 @@ class PEArrayWrapperV2(
     stateDataFlow()
   } .elsewhen(state === DATA_CLEAR.U) {
     stateDataClear()
+  } .elsewhen(state === WEIGHT_ROLL.U) {
+    stateWeightRoll()
   } .elsewhen(state === WEIGHT_REFLOW.U) {
     stateWeightReflow()
   } .otherwise {

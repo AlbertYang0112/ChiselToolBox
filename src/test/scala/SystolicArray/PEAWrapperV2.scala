@@ -300,7 +300,7 @@ class PEAWrapperV2Tests(c: PEArrayWrapperV2) extends AdvTester(c) {
         println(s"KX = $KERNEL_SIZE_X; KY = $KERNEL_SIZE_Y")
         println(s"SX = $STRIDE_X; SY = $STRIDE_Y")
         // Reset the parameters
-        testWeight = List.tabulate(KERNEL_SIZE_Y)(y => List.tabulate(KERNEL_SIZE_X)(x => y))
+        testWeight = List.tabulate(KERNEL_SIZE_Y)(y => List.tabulate(KERNEL_SIZE_X)(x => y + 1))
         println(testWeight.toString())
         reg_poke(c.io.weightUpdate, 1)
         reg_poke(c.io.strideX, STRIDE_X)
