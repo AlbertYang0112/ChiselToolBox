@@ -161,17 +161,23 @@ class PEArrayWrapperV2(
   for(chan <- 0 until cols) {
     PEA.io.ioArray(chan).in.colActivate := activeCol(chan)
   }
-  io.weightUpdateReady := state === WEIGHT_QUEUE_FILL.U | state === WEIGHT_REFLOW.U
+  io.weightUpdateReady := state === WEIGHT_QUEUE_FILL.U | state === WEIGHT_REFRESH.U
 
   when(weightBuffer.io.weightOut.head.fire()) {
     weightFlowConter := Mux(weightFlowConter === weightCount - 1.U, 0.U, weightFlowConter + 1.U)
   }
 
+  val newWeight = RegInit(true.B)
+
   def dataChannelEnq(cond: Bool): Bool= {
     when(cond) {
       dataFlow.foreach(_ := true.B)
       for(col <- 0 until cols) {
-        weightFlow(col) := col.U <= flowCounter | state =/= DATA_FLOW.U
+        when(newWeight) {
+          weightFlow(col) := col.U <= flowCounter | state =/= DATA_FLOW.U
+        } .otherwise {
+          weightFlow(col) := true.B
+        }
       }
       //weightFlow.foreach(_ := true.B)
       enableAllControl()
@@ -220,6 +226,7 @@ class PEArrayWrapperV2(
       flowCounter := Mux(flowCounter === (cols - 1).U, 0.U, flowCounter + 1.U)
       when(flowCounter === (cols - 1).U) {
         // Todo: Change the parameter update method
+        weightCount := 0.U
         state := WEIGHT_QUEUE_FILL.U
         strideX := io.strideX     // Todo: Check the strideX
         kernelSizeX := io.kernelSizeX // Todo: Check the kernelSizeX
@@ -244,7 +251,7 @@ class PEArrayWrapperV2(
     // Refresh the weight in the array
     when(flowCounter === kernelSizeX - 1.U) {
       state := DATA_FLOW.U
-      weightFlowConter := 0.U
+      //weightFlowConter := 0.U
       //flowCounter := 0.U
     } .elsewhen(weightAllValid) {
       flowCounter := Mux(flowCounter === kernelSizeX - 1.U, 0.U, flowCounter + 1.U)
@@ -253,10 +260,18 @@ class PEArrayWrapperV2(
     when(weightAllValid) {
       // All weights are ready to fire.
       for(col <- 0 until cols) {
-        when(col.U < flowCounter) {
-          weightFlow(col) := true.B
+        when(newWeight) {
+          when(col.U < flowCounter) {
+            weightFlow(col) := true.B
+          }.otherwise {
+            weightFlow(col) := false.B
+          }
         } .otherwise {
-          weightFlow(col) := false.B
+          when(flowCounter =/= 0.U) {
+            weightFlow(col) := true.B
+          } .otherwise {
+            weightFlow(col) := false.B
+          }
         }
       }
     } .otherwise {
@@ -272,6 +287,7 @@ class PEArrayWrapperV2(
     when(weightRefreshReq) {
       state := DATA_CLEAR.U
       flowCounter := 0.U
+      newWeight := false.B
       setAllDataFlow(false)
       setAllWeightFlow(false)
       setAllChannelControl(calculate = false, outputSum = false, clearSum = false)
@@ -282,26 +298,6 @@ class PEArrayWrapperV2(
     }
   }
 
-  val weightShiftCounter = RegInit(0.U(3.W))
-  val weightShifting = RegInit(false.B)
-
-  /*
-  when(io.lastBit | weightShifting) {
-    when(io.lastBit) {
-      weightShifting := true.B
-      weightShiftCounter := 0.U
-    }
-    when(weightBuffer.io.weightOut.head.fire()) {
-      when(weightShiftCounter === weightCount) {
-        weightShifting := false.B
-        weightShiftCounter := 0.U
-      } .otherwise {
-        weightShiftCounter := weightShiftCounter + 1.U
-      }
-    }
-  }
-  */
-
   def stateDataClear(): Unit = {
     when(dataInQueue.valid) {
       dataChannelEnq(cond = resultAllReady)
@@ -309,9 +305,9 @@ class PEArrayWrapperV2(
     } .elsewhen(flowCounter =/= Mux(kernelSizeY > kernelSizeX, kernelSizeY, kernelSizeX) + 2.U | Cat(rowController.io.active).orR()) {
       dataChannelEnq(cond = resultAllReady)
     } .otherwise {
-      weightShiftCounter := 0.U
       when(io.continuous) {
-        state := WEIGHT_ROLL.U
+        flowCounter := 1.U
+        state := WEIGHT_REFLOW.U
       } .otherwise {
         state := WEIGHT_CLEAR.U
       }
@@ -319,18 +315,33 @@ class PEArrayWrapperV2(
     }
   }
 
-  def stateWeightRoll(): Unit = {
-    when(weightShiftCounter === weightCount) {
+  val weightShifting = Wire(Bool())
+  when(state =/= WEIGHT_ROLL.U) {
+    weightShifting := false.B
+  } .otherwise {
+    when(flowCounter === weightCount) {
       weightShifting := false.B
-      weightShiftCounter := 0.U
-      flowCounter := 0.U
-      state := WEIGHT_QUEUE_FILL.U
     } .otherwise {
-      weightShiftCounter := weightShiftCounter + 1.U
       weightShifting := true.B
     }
+  }
+
+  def stateWeightRoll(): Unit = {
+    when(flowCounter === weightCount) {
+      weightShifting := false.B
+      setAllWeightFlow(false)
+    } .otherwise {
+      flowCounter := flowCounter + 1.U
+      weightShifting := true.B
+      setAllWeightFlow(true)
+    }
+
+    when(rowController.io.presetDone & flowCounter === weightCount) {
+      weightFlowConter := 0.U
+      flowCounter := 0.U
+      state := WEIGHT_REFRESH.U
+    }
     setAllDataFlow(false)
-    setAllWeightFlow(true)
     setAllChannelControl(calculate = false, outputSum = false, clearSum = false)
     setAllControlFlow(true)
     disableAllControl()
@@ -338,12 +349,14 @@ class PEArrayWrapperV2(
 
   def stateWeightReflow(): Unit = {
     when(weightFlowConter === 0.U) {
-      setAllWeightFlow(false)
+      setAllWeightFlow(true)
+      flowCounter := 0.U
     } .otherwise {
       setAllWeightFlow(true)
+      flowCounter := 1.U
     }
-    when(weightFlowConter === 0.U & rowController.io.presetDone) {
-      state := DATA_FLOW.U
+    when(flowCounter === 0.U) {
+      state := WEIGHT_ROLL.U
     }
     setAllDataFlow(false)
     setAllChannelControl(calculate = false, outputSum = false, clearSum = false)
@@ -357,6 +370,8 @@ class PEArrayWrapperV2(
   } .elsewhen(state === WEIGHT_QUEUE_FILL.U) {
     when(weightRefreshDone) {
       state := WEIGHT_REFRESH.U
+      newWeight := true.B
+      weightFlowConter := 0.U
       flowCounter := 0.U
       repeat := true.B
     } .otherwise {
