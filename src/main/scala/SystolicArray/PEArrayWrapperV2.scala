@@ -306,7 +306,7 @@ class PEArrayWrapperV2(
       dataChannelEnq(cond = resultAllReady)
     } .otherwise {
       when(io.continuous) {
-        flowCounter := 1.U
+        flowCounter := 0.U
         state := WEIGHT_REFLOW.U
       } .otherwise {
         state := WEIGHT_CLEAR.U
@@ -329,14 +329,18 @@ class PEArrayWrapperV2(
   def stateWeightRoll(): Unit = {
     when(flowCounter === weightCount) {
       weightShifting := false.B
+      flowCounter := flowCounter + 1.U
       setAllWeightFlow(false)
-    } .otherwise {
+    } .elsewhen(flowCounter === weightCount + 1.U) {
+      weightShifting := false.B
+      setAllWeightFlow(false)
+    }.otherwise {
       flowCounter := flowCounter + 1.U
       weightShifting := true.B
       setAllWeightFlow(true)
     }
 
-    when(rowController.io.presetDone & flowCounter === weightCount) {
+    when(rowController.io.presetDone & flowCounter === weightCount + 1.U) {
       weightFlowConter := 0.U
       flowCounter := 0.U
       state := WEIGHT_REFRESH.U
@@ -348,15 +352,41 @@ class PEArrayWrapperV2(
   }
 
   def stateWeightReflow(): Unit = {
-    when(weightFlowConter === 0.U) {
-      setAllWeightFlow(true)
+    when(kernelSizeX === 1.U) {
       flowCounter := 0.U
+      when(kernelSizeY === 1.U) {
+        state := WEIGHT_REFRESH.U
+      } .otherwise {
+        state := WEIGHT_ROLL.U
+      }
+      setAllWeightFlow(false)
     } .otherwise {
-      setAllWeightFlow(true)
-      flowCounter := 1.U
-    }
-    when(flowCounter === 0.U) {
-      state := WEIGHT_ROLL.U
+      when(flowCounter < kernelSizeY & kernelSizeY =/= 1.U) {
+        flowCounter := flowCounter + 1.U
+        weightFlowConter := Mux(weightFlowConter === weightCount - 1.U, 0.U, weightFlowConter + 1.U)
+        for (col <- 0 until cols) {
+          when(col.U =/= 0.U) {
+            weightFlow(col) := true.B
+          }.otherwise {
+            weightFlow(col) := false.B
+          }
+        }
+      }.otherwise {
+        when((kernelSizeY =/= 1.U & weightFlowConter === 1.U) |
+          (kernelSizeY === 1.U & weightFlowConter === 0.U)
+        ) {
+          flowCounter := 0.U
+          when(kernelSizeY === 1.U) {
+            state := WEIGHT_REFRESH.U
+          }.otherwise {
+            state := WEIGHT_ROLL.U
+          }
+          setAllWeightFlow(false)
+        }.otherwise {
+          setAllWeightFlow(true)
+          //flowCounter := 1.U
+        }
+      }
     }
     setAllDataFlow(false)
     setAllChannelControl(calculate = false, outputSum = false, clearSum = false)
