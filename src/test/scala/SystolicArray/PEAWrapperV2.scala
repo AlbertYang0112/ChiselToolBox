@@ -9,7 +9,7 @@ class PEAWrapperV2Tests(c: PEArrayWrapperV2) extends AdvTester(c) {
   val weightIn = c.io.weightIn.map{peBundle => DecoupledSource(peBundle)}
   val resultOut = c.io.resultOut.map{peBundle => IrrevocableSink(peBundle)}
 
-  val TEST_CYCLES = 2000
+  val TEST_CYCLES = 30
   resultOut.foreach(_.outputs.clear())
 
   def Convolution1D(data: List[Int], weight: List[Int], stride: Int): List[Int] = {
@@ -337,6 +337,9 @@ class PEAWrapperV2Tests(c: PEArrayWrapperV2) extends AdvTester(c) {
           testWeight((y + cycles % 5) % KERNEL_SIZE_Y),
           STRIDE_X)
       }
+      println(s"In iteration $cycles")
+      println("DATA " + testData)
+      println("WEIGHT" + testWeight)
       resultOut.foreach(_.outputs.clear())
       // Feed data
       for(i <- testData.indices) {
@@ -346,11 +349,9 @@ class PEAWrapperV2Tests(c: PEArrayWrapperV2) extends AdvTester(c) {
           while(dataIn.inputs.nonEmpty) {
             takestep()
           }
-          reg_poke(c.io.lastBit, 1)
           takestep()
         }
       }
-      reg_poke(c.io.lastBit, 0)
       takesteps(10)()
       //reg_poke(c.io.lastFew, 0)
 
@@ -410,9 +411,121 @@ class PEAWrapperV2Tests(c: PEArrayWrapperV2) extends AdvTester(c) {
     pass
   }
 
+  def performTrue2DTest() = {
+    var KERNEL_SIZE_X = 3
+    var KERNEL_SIZE_Y = 3
+    var STRIDE_X = 1
+    var STRIDE_Y = 1
+    var KERNEL_SIZE_X_UPDATE = KERNEL_SIZE_X
+    var KERNEL_SIZE_Y_UPDATE = KERNEL_SIZE_Y
+    var STRIDE_X_UPDATE = 1
+    var STRIDE_Y_UPDATE = 1
+    var pass = true
+    var done = false
+
+    var testWeight: List[ List[Int] ] = null
+
+    testWeight = List.tabulate(KERNEL_SIZE_Y)(y => List.tabulate(KERNEL_SIZE_X)(x => Random.nextInt(10)))
+    println(testWeight.toString())
+    reg_poke(c.io.weightUpdate, 1)
+    reg_poke(c.io.strideX, STRIDE_X)
+    reg_poke(c.io.strideY, STRIDE_Y)
+    reg_poke(c.io.kernelSizeX, KERNEL_SIZE_X)
+    reg_poke(c.io.kernelSizeY, KERNEL_SIZE_Y)
+    reg_poke(c.io.continuous, 0)
+    takestep()
+    while(peek(c.io.weightUpdateReady) != 1) {
+      takestep()
+    }
+    for(i <- 0 until KERNEL_SIZE_X) {
+      for(chan <- 0 until c.cols) {
+        weightIn(chan).inputs.enqueue(
+          if(chan < KERNEL_SIZE_Y)
+            testWeight(chan)(i)
+          else
+            0
+        )
+      }
+    }
+    takesteps(10)()
+    reg_poke(c.io.weightUpdate, 0)
+    takestep()
+    takesteps(2)()
+
+
+    for(cycles <- 0 until TEST_CYCLES if pass & !done) {
+      KERNEL_SIZE_X = KERNEL_SIZE_X_UPDATE
+      KERNEL_SIZE_Y = KERNEL_SIZE_Y_UPDATE
+      STRIDE_X = STRIDE_X_UPDATE
+      STRIDE_Y = STRIDE_Y_UPDATE
+      val DATA_SIZE = 20
+      val testData = List.tabulate(DATA_SIZE)(n => Random.nextInt(50))
+      val expectedResult = List.tabulate(KERNEL_SIZE_Y){y =>
+        Convolution1D(testData,
+          testWeight((y + cycles % 5) % KERNEL_SIZE_Y),
+          STRIDE_X)
+      }
+      resultOut.foreach(_.outputs.clear())
+      println("Feed data")
+      // Feed data
+      for(i <- testData.indices) {
+        dataIn.inputs.enqueue(testData(i))
+        takesteps(1)()
+        if(i == testData.size - 1) {
+          while(dataIn.inputs.nonEmpty) {
+            takestep()
+          }
+          takestep()
+        }
+      }
+      takesteps(10)()
+      //reg_poke(c.io.lastFew, 0)
+
+      reg_poke(c.io.weightUpdate, 1)
+      reg_poke(c.io.strideX, STRIDE_X_UPDATE)
+      reg_poke(c.io.strideY, STRIDE_Y_UPDATE)
+      reg_poke(c.io.kernelSizeX, KERNEL_SIZE_X_UPDATE)
+      reg_poke(c.io.kernelSizeY, KERNEL_SIZE_Y_UPDATE)
+      reg_poke(c.io.continuous, 1)
+      while (peek(c.io.weightUpdateReady) != 1) {
+        takestep()
+      }
+      reg_poke(c.io.weightUpdate, 0)
+      takesteps(10)()
+
+      val resultGet = List.tabulate(resultOut.size){n => resultOut(n).outputs.toList}
+      resultOut.foreach(_.outputs.clear())
+      for(chan <- expectedResult.indices) {
+        for(i <- expectedResult(chan).indices if i < resultGet(chan).size) {
+          /*expect(resultGet(chan)(i) == expectedResult(chan)(i),
+            msg = s"\nChannel $chan.$i " +
+              s"Expect " + expectedResult(chan)(i) + " Get " + resultGet(chan)(i))*/
+          if(resultGet(chan)(i) != expectedResult(chan)(i) || resultGet(chan).size != expectedResult(chan).size)
+            pass = false
+        }
+      }
+      pass = false
+      if(!pass) {
+        println("")
+        println(s"In iteration $cycles")
+        println("DATA " + testData)
+        println("WEIGHT" + testWeight)
+        println(s"Kernel Size: ($KERNEL_SIZE_X, $KERNEL_SIZE_Y)")
+        println(s"Stride: ($STRIDE_X, $STRIDE_Y)")
+        for(chan <- 0 until KERNEL_SIZE_Y) {
+          println(s"ExpectChan$chan " + expectedResult(chan))
+          println(s"ResultGet$chan  " + resultGet(chan))
+        }
+      }
+      pass = true
+    }
+    pass
+  }
+
   //performContinuousLineTest()
   //performFullOneLineTest()
-  perform2DTest()
+  //perform2DTest()
+  performTrue2DTest()
 
   takesteps(100)()
 }

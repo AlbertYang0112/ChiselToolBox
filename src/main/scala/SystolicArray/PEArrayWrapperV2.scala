@@ -26,6 +26,8 @@ trait PEAWState {
 // DoneTodo: Continuous processing between lines.
 // DoneTodo: Weight rolling. Merge the weight rolling with the data clear state.
 //  Roll the weight together with the data flow would result in the state conflict.
+// Todo: Parallel the result output with the data flow of the last line
+// Todo: Merge the result channels
 // Todo: Stretch pad memory for weight storage.
 // Todo: SIMD.
 // Todo: MIMD.
@@ -63,9 +65,9 @@ class PEArrayWrapperV2(
     val strideY = Input(UInt(8.W))
     val flush = Input(Bool())
     val continuous = Input(Bool())
-    val lastBit = Input(Bool())
 
     val lastKernelLine = Vec(cols, Output(Bool()))
+    val firstKernelLine = Vec(cols, Output(Bool()))
   })
 
   // Components
@@ -100,7 +102,9 @@ class PEArrayWrapperV2(
   val weightCount = RegInit(0.U(3.W))
 
   // State Indicator
-  private val resultAllReady = Cat(PEA.io.ioArray.map(_.out.result.ready)).andR()
+  private val filteredResultReady = List.fill(cols)(Wire(Bool()))
+  //private val resultAllReady = Cat(PEA.io.ioArray.map(_.out.result.ready)).andR()
+  private val resultAllReady = Cat(filteredResultReady).andR()
   private val weightAllValid = Cat(PEA.io.ioArray.map(_.in.weight.valid)).andR()
   private val allChannelReady = dataInQueue.valid & weightAllValid & resultAllReady
   private val anyDataChannelFire = Cat(PEA.io.ioArray.map(_.in.data.fire())).orR()
@@ -126,6 +130,10 @@ class PEArrayWrapperV2(
   val kernelSizeX = RegInit((rows - 1).U(3.W))  // Todo: Parameterize the width
   val kernelSizeY = RegInit((cols - 1).U(3.W))
 
+
+  for(col <- 0 until cols) {
+    filteredResultReady(col) := Mux(col.U < kernelSizeY, resultBuffer.io.resultIn(col).ready, true.B)
+  }
 
   val weightRefreshPrev = RegNext(io.weightUpdate)
   private val weightRefreshReq = io.weightUpdate & !weightRefreshPrev
@@ -492,15 +500,6 @@ class PEArrayWrapperV2(
   rowController.io.flow := anyDataFlow | state === DATA_CLEAR.U
   rowController.io.clear := state === DATA_CLEAR.U & !dataInQueue.valid
   rowController.io.controlValid := PEA.io.ioArray.head.in.control.valid
-  /*
-  when(state === DATA_FLOW.U) {
-    rowController.io.outputEnable := true.B
-  } .elsewhen(state === DATA_CLEAR.U & flowCounter < kernelSizeX - 1.U) {
-    rowController.io.outputEnable := true.B
-  } .otherwise {
-    rowController.io.outputEnable := false.B
-  }
-  */
   rowController.io.outputEnable := state === DATA_FLOW.U | state === DATA_CLEAR.U
   rowController.io.presetRequest := state === WEIGHT_QUEUE_FILL.U | state === WEIGHT_REFLOW.U
   rowController.io.stopReallocate := state === DATA_CLEAR.U
@@ -516,6 +515,11 @@ class PEArrayWrapperV2(
   for(col <- 0 until cols) {
     activeCol(col) := colController.io.active(col)
     io.lastKernelLine(col) := colController.io.lastKernelLine(col)
+    io.firstKernelLine(col) := colController.io.firstKernelLine(col)
+    resultBuffer.io.firstLine(col) := colController.io.firstKernelLine(col) &
+      (state === DATA_FLOW.U | state === DATA_CLEAR.U)
+    resultBuffer.io.lastLine(col) := colController.io.lastKernelLine(col) &
+      (state === DATA_FLOW.U | state === DATA_CLEAR.U)
   }
 
   // Unused IO
@@ -525,6 +529,7 @@ class PEArrayWrapperV2(
     PEA.io.ioArray(row).in.result.bits := 0.U(resultWidth.W)
   }
 }
+
 
 class PEAResultBufferOneChannel(
                                val resultWidth: Int,
@@ -541,19 +546,19 @@ class PEAResultBufferOneChannel(
     val toOutput = Input(Bool())
   })
 
+  val dataIn = Wire(UInt(resultWidth.W))
+  val dataInValid = Wire(Bool())
   val adderRhs = Wire(UInt(resultWidth.W))
   val adderResult = adderRhs + dataIn
   val adderResultValid = Wire(Bool())
   val adderRhsReady = Wire(Bool())
-  val dataIn = Wire(UInt(resultWidth.W))
-  val dataInValid = Wire(Bool())
   val bufferInput = Wire(EnqIO(UInt(resultWidth.W)))
   val buffer = Queue(bufferInput, bufferDepth)
 
   // Data Path
   dataIn := Mux(io.fillZero, 0.U, io.resultIn.bits)
-  bufferInput := Mux(io.fromCycAdd, adderResult, dataIn)
-  io.resultOut := Mux(io.toOutput, buffer.bits, 0.U)
+  bufferInput.bits := Mux(io.fromCycAdd, adderResult, dataIn)
+  io.resultOut.bits := Mux(io.toOutput, buffer.bits, 0.U)
   adderRhs := buffer.bits
 
   // Valid/Ready Path
@@ -567,13 +572,13 @@ class PEAResultBufferOneChannel(
   } .elsewhen(io.toDiscard) {
     buffer.ready := true.B
   } .elsewhen(io.toCycAdd) {
-    buffer.ready := adderRhsReady
+    buffer.ready := adderRhsReady & dataInValid
   } .otherwise {
     buffer.ready := false.B
   }
-  adderRhsReady := dataInValid & bufferInput.ready & io.fromCycAdd
+  adderRhsReady := bufferInput.ready & io.fromCycAdd
   when(io.fromCycAdd) {
-    io.resultIn.ready := buffer.valid & dataInValid & bufferInput.ready
+    io.resultIn.ready := buffer.valid & bufferInput.ready & io.toCycAdd & !io.toOutput
   } .elsewhen(io.fillZero) {
     io.resultIn.ready := false.B
   } .otherwise {
@@ -590,11 +595,8 @@ class PEAResultBuffer(
     val resultIn = Vec(cols, DeqIO(UInt(resultWidth.W)))
     val resultOut = Vec(cols, EnqIO(UInt(resultWidth.W)))
 
-    val fillZero = Input(Bool())
-    val fromCycAdd = Input(Bool())
-    val toCycAdd = Input(Bool())
-    val toDiscard = Input(Bool())
-    val toOutput = Input(Bool())
+    val firstLine = Vec(cols, Input(Bool()))
+    val lastLine = Vec(cols, Input(Bool()))
   })
 
   val buffers = List.fill(cols)(Module(new PEAResultBufferOneChannel(
@@ -602,6 +604,49 @@ class PEAResultBuffer(
     bufferDepth = bufferDepth
   )))
 
+  val firstLinePrev = List.tabulate(cols)(n => RegNext(io.firstLine(n)))
+  val lastLinePrev = List.tabulate(cols)(n => RegNext(io.lastLine(n)))
+  val counterResetReq = List.tabulate(cols)(n => io.firstLine(n) & !firstLinePrev(n))
+  val counterSaveReq = List.tabulate(cols)(n => !io.firstLine(n) & firstLinePrev(n))
+  val outputReq = List.tabulate(cols)(n => lastLinePrev(n) & !io.lastLine(n))
+  val outputing = List.fill(cols)(RegInit(false.B))
+
+  val resultCounter = List.fill(cols)(RegInit(0.U(8.W)))
+  val outputCounter = List.fill(cols)(RegInit(0.U(8.W)))
+
+  for(col <- 0 until cols) {
+    when(counterResetReq(col)) {
+      resultCounter(col) := 0.U
+    } .elsewhen(io.firstLine(col) & io.resultIn(col).fire()) {
+      resultCounter(col) := resultCounter(col) + 1.U
+    }
+    when(counterSaveReq(col)) {
+      outputCounter(col) := resultCounter(col)
+    }
+    when(outputReq(col)) {
+      outputing(col) := true.B
+    }
+    when(outputing(col)) {
+      when(io.resultOut(col).fire()) {
+        outputCounter(col) := outputCounter(col) - 1.U
+      }
+      when(outputCounter(col) === 0.U) {
+        outputing(col) := false.B
+      }
+    }
+  }
+  for(col <- 0 until cols) {
+    // Data Path
+    io.resultOut(col) <> buffers(col).io.resultOut
+    buffers(col).io.resultIn <> io.resultIn(col)
+    // Control Signals
+    buffers(col).io.toOutput := outputing(col)
+    buffers(col).io.toCycAdd := !io.firstLine(col)
+    buffers(col).io.fromCycAdd := !io.firstLine(col)
+
+    buffers(col).io.toDiscard := false.B      // Suppose there's no error in the length of result
+    buffers(col).io.fillZero := false.B
+  }
 }
 
 class PEAWeightBuffer(
@@ -791,6 +836,7 @@ class PEAColController(
     val outputEnable = Input(Bool())
     val lineFinish = Input(Bool())
     val lastKernelLine = Vec(cols, Output(Bool()))
+    val firstKernelLine = Vec(cols, Output(Bool()))
 
     val preset = Input(Bool())
     val active = Vec(cols, Output(Bool()))
@@ -802,19 +848,23 @@ class PEAColController(
   val lineFinish = io.lineFinish & !lineFinishPrev
   val presetPrev = RegNext(io.preset)
   val preset = io.preset & !presetPrev
+  val firstFlow = RegInit(true.B)
 
   when(preset) {
     for(col <- 0 until cols) {
       lineCounter(col) := col.U
+      firstFlow := true.B
     }
   } .elsewhen(lineFinish) {
     for(col <- 0 until cols) {
       lineCounter(col) := Mux(lineCounter(col) < io.kernelSize - 1.U, lineCounter(col) + 1.U, 0.U)
     }
+    firstFlow := false.B
   }
 
   for(col <- 0 until cols) {
     io.lastKernelLine(col) := lineCounter(col) === io.kernelSize - 1.U & col.U < io.kernelSize
+    io.firstKernelLine(col) := lineCounter(col) === 0.U | firstFlow
   }
 
   activeChain.head := io.outputEnable
